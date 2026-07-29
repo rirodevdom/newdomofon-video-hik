@@ -28,6 +28,8 @@ jobs:
           grep -q 'DVR_NODE_ID=' deploy/env/app.env.example
           grep -q 'DVR_NODE_TOKEN=' deploy/env/app.env.example
           grep -q 'DVR_NODE_MEDIA_SECRET=' deploy/env/app.env.example
+          grep -q 'agentDerivedMediaSecret' src/http/mediaToken.ts
+          test -s test/http/mediaToken.test.ts
           test -s docs/MANUAL_MASTER_PAIRING.md
       - name: Install locked dependencies
         run: |
