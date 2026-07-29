@@ -31,7 +31,8 @@ rsync -a --delete \
   "$SOURCE_DIR/" "$PROJECT_DIR/"
 
 cd "$PROJECT_DIR"
-npm install --include=dev
+gzip -dc package-lock.json.gz > package-lock.json
+npm ci --include=dev
 npm run check
 npm prune --omit=dev
 chown -R root:root "$PROJECT_DIR"

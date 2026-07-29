@@ -6,3 +6,4 @@ state/
 runtime/
 coverage/
 .DS_Store
+package-lock.json

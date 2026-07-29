@@ -13,7 +13,7 @@ fail() { echo "ERROR: $*" >&2; exit 1; }
 log() { printf '\n[%s] %s\n' "$(date '+%F %T')" "$*"; }
 
 [[ "$(id -u)" -eq 0 ]] || fail "Run as root"
-for command in node npm ffmpeg rsync systemctl openssl; do
+for command in node npm ffmpeg rsync systemctl openssl gzip; do
   command -v "$command" >/dev/null || fail "$command is required"
 done
 
@@ -47,7 +47,8 @@ chmod 0640 "$ENV_FILE"
 
 log "Installing dependencies and building"
 cd "$PROJECT_DIR"
-npm install --include=dev
+gzip -dc package-lock.json.gz > package-lock.json
+npm ci --include=dev
 npm run build
 npm prune --omit=dev
 chown -R root:root "$PROJECT_DIR"
