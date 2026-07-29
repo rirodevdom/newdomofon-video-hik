@@ -1,0 +1,28 @@
+name: Hikvision node CI
+
+on:
+  pull_request:
+  push:
+    branches: [main, 'agent/**']
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Validate shell
+        run: |
+          bash -n scripts/install.sh
+          bash -n scripts/update-installed-project.sh
+      - name: Install
+        run: npm install
+      - name: Build and test
+        env:
+          HIK_NODE_TOKEN: ci-control-token-0123456789
+          HIK_NODE_MEDIA_SECRET: ci-media-secret-0123456789
+          HIK_NODE_STATE_KEY: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+          HIK_NODE_ROOT: ${{ runner.temp }}/newdomofon-video-hik
+        run: npm run check
