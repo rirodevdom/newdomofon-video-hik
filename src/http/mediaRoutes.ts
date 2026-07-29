@@ -7,7 +7,7 @@ import type { HikvisionNodeService } from '../service.js';
 import { archiveDir, liveDir, safeId } from '../media/paths.js';
 import { authorizeMedia, playlistMediaToken } from './mediaToken.js';
 import { parseDateQuery, sendError } from './helpers.js';
-import { localArchiveRanges, streamLocalArchiveMp4 } from '../archive/localArchive.js';
+import { listLocalSegments, localArchiveRanges, streamLocalArchiveMp4 } from '../archive/localArchive.js';
 import { searchDeviceArchive, streamDeviceArchiveMp4 } from '../archive/deviceArchive.js';
 import { DeviceArchiveSessionManager } from '../archive/deviceArchiveSessions.js';
 
@@ -56,6 +56,54 @@ function find(req: Request, service: HikvisionNodeService) {
   const found = service.findChannel(channelId);
   if (!found) throw Object.assign(new Error('Hikvision channel not found'), { statusCode: 404 });
   return { channelId, ...found };
+}
+
+function localSegmentKey(relative: string): string {
+  return Buffer.from(relative, 'utf8').toString('base64url');
+}
+
+function localSegmentRelative(raw: string): string {
+  const key = raw.replace(/\.ts$/i, '');
+  const relative = Buffer.from(key, 'base64url').toString('utf8');
+  if (!relative || relative.includes('\0')) throw Object.assign(new Error('Invalid archive segment key'), { statusCode: 400 });
+  return relative;
+}
+
+async function localArchivePlaylist(channelId: string, service: HikvisionNodeService, start: Date, end: Date, token: string): Promise<string> {
+  const found = service.findChannel(channelId);
+  if (!found) throw Object.assign(new Error('Hikvision channel not found'), { statusCode: 404 });
+  if (found.channel.archive_storage !== 'node') {
+    throw Object.assign(new Error('Local archive playlist is only available for node archive'), { statusCode: 409 });
+  }
+
+  const root = archiveDir(channelId);
+  const segments = (await listLocalSegments(found.channel)).filter((segment) => segment.end >= start && segment.start <= end);
+  if (!segments.length) throw Object.assign(new Error('No local archive segments in selected range'), { statusCode: 404 });
+
+  const durations = segments.map((segment) => Math.max(0.1, (segment.end.getTime() - segment.start.getTime()) / 1000));
+  const targetDuration = Math.max(1, Math.ceil(Math.max(...durations)));
+  const lines = [
+    '#EXTM3U',
+    '#EXT-X-VERSION:3',
+    `#EXT-X-TARGETDURATION:${targetDuration}`,
+    '#EXT-X-MEDIA-SEQUENCE:0',
+    '#EXT-X-PLAYLIST-TYPE:VOD',
+    '#EXT-X-INDEPENDENT-SEGMENTS'
+  ];
+
+  for (let index = 0; index < segments.length; index += 1) {
+    const segment = segments[index]!;
+    const relative = path.relative(root, segment.file);
+    const key = localSegmentKey(relative);
+    const query = token ? `?token=${encodeURIComponent(token)}` : '';
+    lines.push(
+      `#EXT-X-PROGRAM-DATE-TIME:${segment.start.toISOString()}`,
+      `#EXTINF:${durations[index]!.toFixed(3)},`,
+      `/api/v1/media/channels/${encodeURIComponent(channelId)}/archive/local/${key}.ts${query}`
+    );
+  }
+  lines.push('#EXT-X-ENDLIST', '');
+  return lines.join('\n');
 }
 
 export function createMediaRouter(service: HikvisionNodeService, sessions: DeviceArchiveSessionManager): Router {
@@ -128,6 +176,39 @@ export function createMediaRouter(service: HikvisionNodeService, sessions: Devic
     }
   });
 
+  router.get('/channels/:channelId/archive/local/index.m3u8', async (req, res) => {
+    try {
+      const found = find(req, service);
+      const token = playlistMediaToken(req, found.channelId, 'archive');
+      const start = parseDateQuery(req.query.start, 'start');
+      const end = parseDateQuery(req.query.end, 'end');
+      if (end <= start) throw Object.assign(new Error('end must be after start'), { statusCode: 400 });
+      if ((end.getTime() - start.getTime()) / 1000 > config.deviceArchiveMaxSeconds) {
+        throw Object.assign(new Error(`Requested range exceeds ${config.deviceArchiveMaxSeconds} seconds`), { statusCode: 400 });
+      }
+      const body = await localArchivePlaylist(found.channelId, service, start, end, token);
+      res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
+      res.setHeader('Cache-Control', 'no-store');
+      res.send(body);
+    } catch (error) {
+      sendError(res, error);
+    }
+  });
+
+  router.get('/channels/:channelId/archive/local/:segmentKey', async (req, res) => {
+    try {
+      const found = find(req, service);
+      authorizeMedia(req, found.channelId, 'archive');
+      if (found.channel.archive_storage !== 'node') {
+        throw Object.assign(new Error('Local archive segment is only available for node archive'), { statusCode: 409 });
+      }
+      const relative = localSegmentRelative(String(req.params.segmentKey || ''));
+      await serveFile(res, safeFile(archiveDir(found.channelId), relative));
+    } catch (error) {
+      sendError(res, error);
+    }
+  });
+
   router.get('/channels/:channelId/archive/export.mp4', async (req, res) => {
     try {
       const found = find(req, service);
@@ -153,18 +234,33 @@ export function createMediaRouter(service: HikvisionNodeService, sessions: Devic
     try {
       const found = find(req, service);
       const token = playlistMediaToken(req, found.channelId, 'archive');
-      if (found.channel.archive_storage !== 'device') {
-        throw Object.assign(new Error('Archive sessions are only required for device archive'), { statusCode: 409 });
-      }
       const start = parseDateQuery(req.body?.start ?? req.query.start, 'start');
       const end = parseDateQuery(req.body?.end ?? req.query.end, 'end');
       if (end <= start) throw Object.assign(new Error('end must be after start'), { statusCode: 400 });
+
+      if (found.channel.archive_storage === 'node') {
+        if ((end.getTime() - start.getTime()) / 1000 > config.deviceArchiveMaxSeconds) {
+          throw Object.assign(new Error(`Requested range exceeds ${config.deviceArchiveMaxSeconds} seconds`), { statusCode: 400 });
+        }
+        const query = new URLSearchParams({ start: start.toISOString(), end: end.toISOString() });
+        if (token) query.set('token', token);
+        return res.json({
+          id: `local-${Date.now()}`,
+          channel_id: found.channelId,
+          start: start.toISOString(),
+          end: end.toISOString(),
+          source: 'node',
+          playlist_url: `/api/v1/media/channels/${encodeURIComponent(found.channelId)}/archive/local/index.m3u8?${query.toString()}`
+        });
+      }
+
       const session = await sessions.getOrCreate(found.device.config, found.channel, start, end);
-      res.json({
+      return res.json({
         id: session.id,
         channel_id: found.channelId,
         start: session.start.toISOString(),
         end: session.end.toISOString(),
+        source: 'device',
         playlist_url: `/api/v1/media/channels/${encodeURIComponent(found.channelId)}/archive/sessions/${session.id}/index.m3u8${token ? `?token=${encodeURIComponent(token)}` : ''}`
       });
     } catch (error) {
