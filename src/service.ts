@@ -136,6 +136,46 @@ export class HikvisionNodeService {
     }
   }
 
+  async reconcileMasterDevices(configs: HikvisionDeviceConfig[]): Promise<void> {
+    const existing = new Map(this.state.devices.map((device) => [device.config.id, device]));
+    const next: HikvisionDeviceSnapshot[] = [];
+    const changedIds = new Set<string>();
+
+    for (const configValue of configs) {
+      const config = structuredClone(configValue);
+      const current = existing.get(config.id);
+      if (!current || JSON.stringify(current.config) !== JSON.stringify(config)) changedIds.add(config.id);
+      next.push(current ? { ...current, config } : {
+        config,
+        device_info: {},
+        capabilities: {},
+        channels: [],
+        last_sync_at: null,
+        last_sync_error: null
+      });
+    }
+
+    const nextIds = new Set(next.map((device) => device.config.id));
+    const removed = this.state.devices.some((device) => !nextIds.has(device.config.id));
+    this.state.devices = next;
+    if (changedIds.size || removed) await this.persist();
+    await this.reconcileRecorders();
+
+    for (const device of this.state.devices) {
+      if (!device.config.enabled || !changedIds.has(device.config.id)) continue;
+      try {
+        await this.syncDevice(device.config.id);
+      } catch (error) {
+        console.warn(`[master-sync:${device.config.id}] ${error instanceof Error ? error.message : error}`);
+      }
+    }
+  }
+
+  async restartRecorders(): Promise<void> {
+    this.recorderManager.stopAll();
+    await this.reconcileRecorders();
+  }
+
   async refreshStreamSettings(channelId: string, streamId: string): Promise<HikvisionChannel> {
     const found = this.findChannel(channelId);
     if (!found) throw new Error('Hikvision channel not found');
