@@ -6,9 +6,20 @@ import type {
   HikvisionChannel,
   HikvisionDeviceConfig,
   HikvisionDeviceSnapshot,
-  PersistedState
+  PersistedState,
+  RecorderStatus
 } from './types.js';
 import { enforceLocalRetention } from './archive/localArchive.js';
+
+export function resolveChannelOnlineStatus(
+  isapiOnline: boolean | null,
+  recorder: Pick<RecorderStatus, 'running' | 'restarts' | 'last_error'>
+): boolean | null {
+  if (isapiOnline !== null) return isapiOnline;
+  if (recorder.running) return true;
+  if (recorder.last_error || recorder.restarts > 0) return false;
+  return null;
+}
 
 export class HikvisionNodeService {
   readonly recorderManager = new RecorderManager();
@@ -35,16 +46,23 @@ export class HikvisionNodeService {
   }
 
   listDevices(redactSecrets = true): HikvisionDeviceSnapshot[] {
-    return this.state.devices.map((device) => this.redact(device, redactSecrets));
+    return this.state.devices.map((device) => this.snapshotView(device, redactSecrets));
   }
 
   getDevice(id: string, redactSecrets = true): HikvisionDeviceSnapshot | null {
     const item = this.state.devices.find((device) => device.config.id === id);
-    return item ? this.redact(item, redactSecrets) : null;
+    return item ? this.snapshotView(item, redactSecrets) : null;
   }
 
-  private redact(snapshot: HikvisionDeviceSnapshot, redactSecrets: boolean): HikvisionDeviceSnapshot {
+  private channelView(channel: HikvisionChannel): HikvisionChannel {
+    const copy = structuredClone(channel);
+    copy.online = resolveChannelOnlineStatus(copy.online, this.recorderManager.status(copy.id));
+    return copy;
+  }
+
+  private snapshotView(snapshot: HikvisionDeviceSnapshot, redactSecrets: boolean): HikvisionDeviceSnapshot {
     const copy = structuredClone(snapshot);
+    copy.channels = copy.channels.map((channel) => this.channelView(channel));
     if (redactSecrets) copy.config.password = copy.config.password ? '***' : '';
     return copy;
   }
@@ -61,7 +79,7 @@ export class HikvisionNodeService {
     return this.state.devices.flatMap((device) => device.channels.map((channel) => ({
       device_id: device.config.id,
       device_name: device.config.name,
-      channel: structuredClone(channel)
+      channel: this.channelView(channel)
     })));
   }
 
@@ -185,7 +203,7 @@ export class HikvisionNodeService {
     else found.channel.streams.push(settings);
     await this.persist();
     await this.reconcileRecorders();
-    return structuredClone(found.channel);
+    return this.channelView(found.channel);
   }
 
   private async persist(): Promise<void> {
