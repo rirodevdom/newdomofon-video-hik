@@ -25,17 +25,32 @@ async function main(): Promise<void> {
 
   const app = express();
   app.disable('x-powered-by');
+  app.use((req, res, next) => {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Authorization,Content-Type,X-Hikvision-Media-Token');
+    res.setHeader('Access-Control-Expose-Headers', 'Content-Length,Content-Type');
+    if (req.method === 'OPTIONS') return res.sendStatus(204);
+    return next();
+  });
   app.use(express.json({ limit: '1mb' }));
 
   app.get('/health', (_req, res) => {
     res.json({
       ok: true,
       service: 'newdomofon-video-hik',
-      version: '0.2.0',
+      version: '0.3.0',
       devices: service.listDevices().length,
       channels: service.allChannels().length,
       recorders: service.recorderManager.allStatuses().filter((item) => item.running).length,
       archive_policy: ['node', 'device'],
+      media: {
+        live_hls: true,
+        archive_hls: true,
+        archive_ranges: true,
+        archive_export: true,
+        snapshot: true
+      },
       isapi: true,
       master_pairing: masterAgent.enabled,
       node_kind: 'hikvision'
