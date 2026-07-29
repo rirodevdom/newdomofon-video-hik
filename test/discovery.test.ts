@@ -12,8 +12,8 @@ const responses: Record<string, string> = {
   '/ISAPI/System/capabilities': '<DeviceCap><SysCap><isSupportMetadata>true</isSupportMetadata></SysCap></DeviceCap>',
   '/ISAPI/ContentMgmt/InputProxy/channels/status': `
     <InputProxyChannelStatusList>
-      <InputProxyChannelStatus><id>1</id><name>Front</name><online>true</online><enabled>true</enabled><streamingProxyChannelId>101</streamingProxyChannelId></InputProxyChannelStatus>
-      <InputProxyChannelStatus><id>2</id><name>Back</name><online>false</online><enabled>true</enabled><streamingProxyChannelId>201</streamingProxyChannelId></InputProxyChannelStatus>
+      <InputProxyChannelStatus><id>101</id><name>Front</name><status>connected</status><enabled>true</enabled><streamingProxyChannelId>101</streamingProxyChannelId></InputProxyChannelStatus>
+      <InputProxyChannelStatus><id>201</id><name>Back</name><channelStatus>videoLost</channelStatus><enabled>true</enabled><streamingProxyChannelId>201</streamingProxyChannelId></InputProxyChannelStatus>
     </InputProxyChannelStatusList>`,
   '/ISAPI/ContentMgmt/InputProxy/channels': '<InputProxyChannelList/>',
   '/ISAPI/Streaming/channels/101': '<StreamingChannel><id>101</id><channelName>Front main detailed</channelName><enabled>true</enabled><videoInputChannelID>1</videoInputChannelID><Video><videoCodecType>H.265</videoCodecType><videoResolutionWidth>2560</videoResolutionWidth><videoResolutionHeight>1440</videoResolutionHeight><maxFrameRate>2500</maxFrameRate><maxBitRate>4096</maxBitRate><GovLength>50</GovLength></Video><Audio><audioCompressionType>G.711ulaw</audioCompressionType></Audio></StreamingChannel>',
@@ -27,7 +27,7 @@ const responses: Record<string, string> = {
     </StreamingChannelList>`
 };
 
-test('discovers physical channels and stream settings', async (t) => {
+test('discovers physical channels and normalizes Hikvision online status variants', async (t) => {
   const server = http.createServer((req, res) => {
     const body = responses[req.url || ''];
     if (!body) {
@@ -61,10 +61,12 @@ test('discovers physical channels and stream settings', async (t) => {
 
   assert.equal(result.channels.length, 2);
   assert.equal(result.channels[0]?.id, 'nvr-1:1');
+  assert.equal(result.channels[0]?.online, true);
   assert.equal(result.channels[0]?.primary_stream_id, '101');
   assert.equal(result.channels[0]?.streams.length, 2);
   assert.equal(result.channels[0]?.streams[0]?.video_codec, 'H.265');
   assert.equal(result.channels[0]?.streams[0]?.name, 'Front main detailed');
   assert.equal(result.channels[0]?.streams[0]?.frame_rate, 25);
+  assert.equal(result.channels[1]?.id, 'nvr-1:2');
   assert.equal(result.channels[1]?.online, false);
 });
