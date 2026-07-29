@@ -19,10 +19,15 @@ jobs:
           fetch-depth: 0
       - name: Apply implementation
         run: |
-          # Decode the reviewed patch staged by the agent.
-          base64 -d .github/agent.patch.gz.b64 | gzip -dc > /tmp/agent.patch
+          if ! compgen -G '.github/patch-parts/*' >/dev/null; then
+            echo 'No staged patch parts; nothing to apply.'
+            exit 0
+          fi
+
+          cat .github/patch-parts/* | tr -d '\n\r' | base64 -d | gzip -dc > /tmp/agent.patch
           git apply --index /tmp/agent.patch
-          git rm .github/agent.patch.gz.b64 .github/workflows/apply-agent-patch.yml
+          git rm -r .github/patch-parts
+          git rm -f .github/agent.patch.gz.b64 || true
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
           git commit -m "Implement manual master pairing for Hikvision node"
