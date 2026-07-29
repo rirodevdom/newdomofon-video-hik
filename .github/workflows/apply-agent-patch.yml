@@ -3,6 +3,8 @@ name: Apply pairing implementation
 on:
   push:
     branches: ['agent/manual-master-pairing']
+  pull_request:
+    branches: [main]
 
 permissions:
   contents: write
