@@ -75,6 +75,38 @@ function parseStreamingChannels(xml: string): HikvisionStreamSettings[] {
     .filter((item): item is HikvisionStreamSettings => Boolean(item));
 }
 
+function statusValue(...values: unknown[]): boolean | null {
+  for (const value of values) {
+    const direct = boolValue(value);
+    if (direct != null) return direct;
+
+    const normalized = scalar(value)?.trim().toLowerCase().replace(/[^a-z0-9]+/g, '');
+    if (!normalized) continue;
+    if ([
+      'connect', 'connected', 'normal', 'active', 'ok', 'ready',
+      'registered', 'working', 'streaming', 'available', 'alive'
+    ].includes(normalized)) return true;
+    if ([
+      'disconnect', 'disconnected', 'abnormal', 'inactive', 'error', 'fault',
+      'failed', 'unregistered', 'videolost', 'nosignal', 'unavailable', 'dead'
+    ].includes(normalized)) return false;
+  }
+  return null;
+}
+
+function proxyPhysicalChannel(block: Record<string, unknown>, streamingProxyChannelId: string | null): number {
+  const raw = numberValue(
+    block.videoInputChannelID
+    ?? block.inputProxyChannelID
+    ?? block.proxyChannelID
+    ?? block.id
+    ?? firstScalar(block, ['videoInputChannelID', 'inputProxyChannelID', 'proxyChannelID', 'id'])
+  );
+  if (raw != null && raw > 0) return physicalChannelFromStreamId(String(raw));
+  if (streamingProxyChannelId) return physicalChannelFromStreamId(streamingProxyChannelId);
+  return 0;
+}
+
 function parseProxyStatus(xml: string): ProxyStatus[] {
   const parsed = xmlParser.parse(xml);
   const blocks = [
@@ -82,15 +114,51 @@ function parseProxyStatus(xml: string): ProxyStatus[] {
     ...findObjects(parsed, 'InputProxyChannel')
   ];
   return blocks.map((block) => {
-    const physicalChannel = numberValue(block.id) || 0;
+    const streamingProxyChannelId = scalar(
+      block.streamingProxyChannelId
+      ?? block.streamingProxyChannelID
+      ?? firstScalar(block, ['streamingProxyChannelId', 'streamingProxyChannelID'])
+    );
+    const physicalChannel = proxyPhysicalChannel(block, streamingProxyChannelId);
     return {
       physicalChannel,
-      name: scalar(block.name ?? block.channelName),
-      online: boolValue(block.online ?? block.status),
-      enabled: boolValue(block.enabled),
-      streamingProxyChannelId: scalar(block.streamingProxyChannelId)
+      name: scalar(block.name ?? block.channelName) ?? firstScalar(block, ['name', 'channelName']),
+      online: statusValue(
+        block.online,
+        block.status,
+        block.connectionStatus,
+        block.connectStatus,
+        block.registerStatus,
+        block.channelStatus,
+        block.workingStatus,
+        firstScalar(block, [
+          'online', 'status', 'connectionStatus', 'connectStatus',
+          'registerStatus', 'channelStatus', 'workingStatus'
+        ])
+      ),
+      enabled: boolValue(block.enabled ?? block.enable ?? firstScalar(block, ['enabled', 'enable'])),
+      streamingProxyChannelId
     };
   }).filter((item) => item.physicalChannel > 0);
+}
+
+function mergeProxyStatuses(statuses: ProxyStatus[]): ProxyStatus[] {
+  const merged = new Map<number, ProxyStatus>();
+  for (const status of statuses) {
+    const current = merged.get(status.physicalChannel);
+    if (!current) {
+      merged.set(status.physicalChannel, status);
+      continue;
+    }
+    merged.set(status.physicalChannel, {
+      physicalChannel: status.physicalChannel,
+      name: current.name ?? status.name,
+      online: current.online ?? status.online,
+      enabled: current.enabled ?? status.enabled,
+      streamingProxyChannelId: current.streamingProxyChannelId ?? status.streamingProxyChannelId
+    });
+  }
+  return [...merged.values()];
 }
 
 function choosePrimary(streams: HikvisionStreamSettings[], override?: string): string {
@@ -175,7 +243,6 @@ async function optionalGet(client: IsapiClient, path: string): Promise<string | 
   }
 }
 
-
 async function enrichStreamSettings(
   client: IsapiClient,
   listedStreams: HikvisionStreamSettings[]
@@ -226,10 +293,10 @@ export async function discoverHikvisionDevice(device: HikvisionDeviceConfig): Pr
 
   const listedStreams = streamingXml ? parseStreamingChannels(streamingXml) : [];
   const streams = await enrichStreamSettings(client, listedStreams);
-  const statuses = [
+  const statuses = mergeProxyStatuses([
     ...(proxyStatusXml ? parseProxyStatus(proxyStatusXml) : []),
     ...(proxyChannelsXml ? parseProxyStatus(proxyChannelsXml) : [])
-  ];
+  ]);
   const channels = mergeChannels(device, streams, statuses);
   if (!channels.length) throw new Error('No live channels were discovered on the Hikvision device');
 
