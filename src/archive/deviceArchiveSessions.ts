@@ -164,7 +164,11 @@ export class DeviceArchiveSessionManager {
       }
       await new Promise((resolve) => setTimeout(resolve, 250));
     }
-    throw new Error('Device archive session did not produce a playlist in time');
+    session.process?.kill('SIGTERM');
+    session.process = null;
+    session.status = 'error';
+    session.error = 'Device archive session did not produce a playlist in time';
+    throw new Error(session.error);
   }
 
   private async cleanup(): Promise<void> {

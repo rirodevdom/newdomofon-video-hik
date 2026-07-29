@@ -16,6 +16,9 @@ const responses: Record<string, string> = {
       <InputProxyChannelStatus><id>2</id><name>Back</name><online>false</online><enabled>true</enabled><streamingProxyChannelId>201</streamingProxyChannelId></InputProxyChannelStatus>
     </InputProxyChannelStatusList>`,
   '/ISAPI/ContentMgmt/InputProxy/channels': '<InputProxyChannelList/>',
+  '/ISAPI/Streaming/channels/101': '<StreamingChannel><id>101</id><channelName>Front main detailed</channelName><enabled>true</enabled><videoInputChannelID>1</videoInputChannelID><Video><videoCodecType>H.265</videoCodecType><videoResolutionWidth>2560</videoResolutionWidth><videoResolutionHeight>1440</videoResolutionHeight><maxFrameRate>2500</maxFrameRate><maxBitRate>4096</maxBitRate><GovLength>50</GovLength></Video><Audio><audioCompressionType>G.711ulaw</audioCompressionType></Audio></StreamingChannel>',
+  '/ISAPI/Streaming/channels/102': '<StreamingChannel><id>102</id><channelName>Front sub detailed</channelName><enabled>true</enabled><videoInputChannelID>1</videoInputChannelID><Video><videoCodecType>H.264</videoCodecType><videoResolutionWidth>640</videoResolutionWidth><videoResolutionHeight>360</videoResolutionHeight><maxFrameRate>1500</maxFrameRate><maxBitRate>512</maxBitRate></Video></StreamingChannel>',
+  '/ISAPI/Streaming/channels/201': '<StreamingChannel><id>201</id><channelName>Back main detailed</channelName><enabled>true</enabled><videoInputChannelID>2</videoInputChannelID><Video><videoCodecType>H.264</videoCodecType></Video></StreamingChannel>',
   '/ISAPI/Streaming/channels': `
     <StreamingChannelList>
       <StreamingChannel><id>101</id><channelName>Front main</channelName><enabled>true</enabled><videoInputChannelID>1</videoInputChannelID><Video><videoCodecType>H.265</videoCodecType><videoResolutionWidth>2560</videoResolutionWidth><videoResolutionHeight>1440</videoResolutionHeight><maxFrameRate>2500</maxFrameRate><maxBitRate>4096</maxBitRate><GovLength>50</GovLength></Video><Audio><audioCompressionType>G.711ulaw</audioCompressionType></Audio></StreamingChannel>
@@ -61,6 +64,7 @@ test('discovers physical channels and stream settings', async (t) => {
   assert.equal(result.channels[0]?.primary_stream_id, '101');
   assert.equal(result.channels[0]?.streams.length, 2);
   assert.equal(result.channels[0]?.streams[0]?.video_codec, 'H.265');
+  assert.equal(result.channels[0]?.streams[0]?.name, 'Front main detailed');
   assert.equal(result.channels[0]?.streams[0]?.frame_rate, 25);
   assert.equal(result.channels[1]?.online, false);
 });

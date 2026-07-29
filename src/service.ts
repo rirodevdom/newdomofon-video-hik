@@ -81,7 +81,12 @@ export class HikvisionNodeService {
     if (index >= 0) this.state.devices[index] = snapshot;
     else this.state.devices.push(snapshot);
     await this.persist();
-    await this.syncDevice(config.id);
+    try {
+      await this.syncDevice(config.id);
+    } catch {
+      // Configuration is intentionally retained. The returned snapshot exposes
+      // last_sync_error so master can display the failure and retry later.
+    }
     return this.getDevice(config.id)!;
   }
 

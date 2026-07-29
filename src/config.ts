@@ -37,6 +37,7 @@ export const config = {
   ffprobePath: process.env.FFPROBE_PATH || '/usr/bin/ffprobe',
   requestTimeoutMs: numberEnv('HIK_ISAPI_TIMEOUT_MS', 10_000, 1000),
   syncIntervalSeconds: numberEnv('HIK_CHANNEL_SYNC_SECONDS', 300, 10),
+  streamSettingsConcurrency: numberEnv('HIK_STREAM_SETTINGS_CONCURRENCY', 4, 1),
   segmentSeconds: numberEnv('HIK_SEGMENT_SECONDS', 4, 1),
   liveWindow: numberEnv('HIK_LIVE_WINDOW', 8, 2),
   archiveSearchPageSize: numberEnv('HIK_ARCHIVE_SEARCH_PAGE_SIZE', 64, 1),

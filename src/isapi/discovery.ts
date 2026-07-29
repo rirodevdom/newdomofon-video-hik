@@ -1,3 +1,4 @@
+import { config } from '../config.js';
 import type {
   HikvisionChannel,
   HikvisionDeviceConfig,
@@ -6,6 +7,7 @@ import type {
 } from '../types.js';
 import { IsapiClient } from './client.js';
 import {
+  asArray,
   boolValue,
   findObjects,
   firstScalar,
@@ -173,6 +175,35 @@ async function optionalGet(client: IsapiClient, path: string): Promise<string | 
   }
 }
 
+
+async function enrichStreamSettings(
+  client: IsapiClient,
+  listedStreams: HikvisionStreamSettings[]
+): Promise<HikvisionStreamSettings[]> {
+  if (!listedStreams.length) return listedStreams;
+  const results: HikvisionStreamSettings[] = new Array(listedStreams.length);
+  let cursor = 0;
+  const worker = async () => {
+    for (;;) {
+      const index = cursor;
+      cursor += 1;
+      const listed = listedStreams[index];
+      if (!listed) return;
+      try {
+        const xml = await client.get(`/ISAPI/Streaming/channels/${encodeURIComponent(listed.id)}`);
+        const parsed = xmlParser.parse(xml);
+        const block = findObjects(parsed, 'StreamingChannel')[0] || objectValue(parsed.StreamingChannel);
+        results[index] = parseStream(block) || listed;
+      } catch {
+        results[index] = listed;
+      }
+    }
+  };
+  const workerCount = Math.min(config.streamSettingsConcurrency, listedStreams.length);
+  await Promise.all(Array.from({ length: workerCount }, () => worker()));
+  return results;
+}
+
 export interface DiscoveryResult {
   device_info: Record<string, unknown>;
   capabilities: Record<string, unknown>;
@@ -193,7 +224,8 @@ export async function discoverHikvisionDevice(device: HikvisionDeviceConfig): Pr
     throw new Error('Device returned no ISAPI channel list');
   }
 
-  const streams = streamingXml ? parseStreamingChannels(streamingXml) : [];
+  const listedStreams = streamingXml ? parseStreamingChannels(streamingXml) : [];
+  const streams = await enrichStreamSettings(client, listedStreams);
   const statuses = [
     ...(proxyStatusXml ? parseProxyStatus(proxyStatusXml) : []),
     ...(proxyChannelsXml ? parseProxyStatus(proxyChannelsXml) : [])

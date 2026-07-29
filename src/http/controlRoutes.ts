@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import type { HikvisionNodeService } from '../service.js';
+import { config } from '../config.js';
 import { requireControlAuth } from './controlAuth.js';
 import { createMediaToken } from './mediaToken.js';
 import { sendError } from './helpers.js';
@@ -104,8 +105,9 @@ export function createControlRouter(service: HikvisionNodeService): Router {
     try {
       const input = mediaTokenSchema.parse(req.body || {});
       if (!service.findChannel(input.channel_id)) return res.status(404).json({ error: 'Hikvision channel not found' });
-      const token = createMediaToken(input.channel_id, input.scopes, input.ttl_seconds);
-      return res.json({ token, expires_in: input.ttl_seconds, channel_id: input.channel_id, scopes: input.scopes });
+      const ttl = Math.min(input.ttl_seconds, config.mediaTokenMaxSeconds);
+      const token = createMediaToken(input.channel_id, input.scopes, ttl);
+      return res.json({ token, expires_in: ttl, channel_id: input.channel_id, scopes: input.scopes });
     } catch (error) {
       sendError(res, error);
     }
