@@ -12,8 +12,19 @@ export interface MediaTokenPayload {
   iat: number;
 }
 
-function signBody(body: string): string {
-  return crypto.createHmac('sha256', config.mediaSecret).update(body).digest('base64url');
+function signBodyWith(secret: string, body: string): string {
+  return crypto.createHmac('sha256', secret).update(body).digest('base64url');
+}
+
+function primaryMediaSignature(body: string): string {
+  return signBodyWith(config.mediaSecret, body);
+}
+
+function agentDerivedMediaSecret(): string {
+  // Master stores only SHA-256(DVR_NODE_TOKEN), while the node owns the raw
+  // token. Deriving the HMAC key this way gives both sides the same media-only
+  // credential without exposing or persisting the raw agent token on master.
+  return crypto.createHash('sha256').update(config.nodeToken).digest('hex');
 }
 
 function unauthorized(message: string): Error & { statusCode: number } {
@@ -26,18 +37,32 @@ function safeEqual(left: string, right: string): boolean {
   return a.length === b.length && crypto.timingSafeEqual(a, b);
 }
 
+function signatureAccepted(body: string, signature: string): boolean {
+  if (safeEqual(signature, primaryMediaSignature(body))) return true;
+  return safeEqual(signature, signBodyWith(agentDerivedMediaSecret(), body));
+}
+
 export function createMediaToken(channelId: string, scopes: MediaScope[], ttlSeconds: number): string {
   const now = Math.floor(Date.now() / 1000);
   const ttl = Math.max(1, Math.min(Math.floor(ttlSeconds), config.mediaTokenMaxSeconds));
   const payload: MediaTokenPayload = { channel_id: channelId, scopes, iat: now, exp: now + ttl };
   const body = Buffer.from(JSON.stringify(payload)).toString('base64url');
-  return `${body}.${signBody(body)}`;
+  return `${body}.${primaryMediaSignature(body)}`;
 }
 
 export function verifyMediaToken(raw: string, channelId: string, scope: MediaScope): MediaTokenPayload {
-  const [body, signature] = raw.split('.');
-  if (!body || !signature || !safeEqual(signature, signBody(body))) throw unauthorized('Invalid media token signature');
-  const payload = JSON.parse(Buffer.from(body, 'base64url').toString('utf8')) as MediaTokenPayload;
+  const [body, signature, extra] = raw.split('.');
+  if (!body || !signature || extra || !signatureAccepted(body, signature)) {
+    throw unauthorized('Invalid media token signature');
+  }
+
+  let payload: MediaTokenPayload;
+  try {
+    payload = JSON.parse(Buffer.from(body, 'base64url').toString('utf8')) as MediaTokenPayload;
+  } catch {
+    throw unauthorized('Invalid media token payload');
+  }
+
   if (payload.channel_id !== channelId) throw unauthorized('Media token channel mismatch');
   if (!Array.isArray(payload.scopes) || !payload.scopes.includes(scope)) throw unauthorized('Media token scope mismatch');
   if (!Number.isFinite(payload.exp) || payload.exp < Math.floor(Date.now() / 1000)) throw unauthorized('Media token expired');
