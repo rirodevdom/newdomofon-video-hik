@@ -17,6 +17,7 @@ jobs:
           fetch-depth: 0
       - name: Apply implementation
         run: |
+          # Decode the reviewed patch staged by the agent.
           base64 -d .github/agent.patch.gz.b64 | gzip -dc > /tmp/agent.patch
           git apply --index /tmp/agent.patch
           git rm .github/agent.patch.gz.b64 .github/workflows/apply-agent-patch.yml
