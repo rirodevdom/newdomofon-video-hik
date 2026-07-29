@@ -13,18 +13,34 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - name: Validate shell
+      - name: Validate installer and pairing contract
         run: |
           bash -n scripts/install.sh
           bash -n scripts/update-installed-project.sh
+          bash scripts/install.sh --help >/tmp/hik-install-help.txt
+          grep -q -- '--master-url' /tmp/hik-install-help.txt
+          grep -q -- '--node-id' /tmp/hik-install-help.txt
+          grep -q -- '--node-token' /tmp/hik-install-help.txt
+          grep -q -- '--media-secret' /tmp/hik-install-help.txt
+          grep -q 'newdomofon-hik-master-registration.env' scripts/install.sh
+          grep -q 'NODE_KIND=hikvision' scripts/install.sh
+          grep -q 'DVR_MASTER_URL=' deploy/env/app.env.example
+          grep -q 'DVR_NODE_ID=' deploy/env/app.env.example
+          grep -q 'DVR_NODE_TOKEN=' deploy/env/app.env.example
+          grep -q 'DVR_NODE_MEDIA_SECRET=' deploy/env/app.env.example
+          test -s docs/MANUAL_MASTER_PAIRING.md
       - name: Install locked dependencies
         run: |
           gzip -dc package-lock.json.gz > package-lock.json
           npm ci
       - name: Build and test
         env:
-          HIK_NODE_TOKEN: ci-control-token-0123456789
-          HIK_NODE_MEDIA_SECRET: ci-media-secret-0123456789
+          DVR_MASTER_URL: https://video-master.example.com
+          DVR_NODE_ID: 11111111-2222-4333-8444-555555555555
+          DVR_NODE_TOKEN: ci-control-token-0123456789
+          DVR_NODE_MEDIA_SECRET: ci-media-secret-0123456789
+          DVR_NODE_PUBLIC_BASE_URL: http://192.0.2.41:3020
+          DVR_NODE_INTERNAL_URL: http://192.0.2.41:3020
           HIK_NODE_STATE_KEY: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
           HIK_NODE_ROOT: ${{ runner.temp }}/newdomofon-video-hik
         run: npm run check

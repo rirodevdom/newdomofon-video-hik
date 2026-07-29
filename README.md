@@ -76,29 +76,19 @@ POST /api/v1/media/channels/:channelId/archive/session
 
 Подробный контракт: [docs/MASTER_CONTRACT_V1.md](docs/MASTER_CONTRACT_V1.md).
 
-## Добавление устройства
+## Подключение к master
 
-```bash
-curl -fsS -X PUT \
-  -H "Authorization: Bearer ${HIK_NODE_TOKEN}" \
-  -H 'Content-Type: application/json' \
-  http://127.0.0.1:3020/api/v1/control/devices/nvr-1 \
-  -d '{
-    "name": "Основной NVR",
-    "host": "10.110.56.20",
-    "scheme": "http",
-    "isapi_port": 80,
-    "rtsp_port": 554,
-    "username": "admin",
-    "password": "REPLACE_ME",
-    "archive_storage": "device",
-    "retention_days": 30,
-    "enabled": true,
-    "reject_unauthorized_tls": true
-  }'
-```
+Основной production-поток совпадает с обычной video node:
 
-После сохранения node немедленно запускает ISAPI discovery, сохраняет каналы и запускает live recorder для каждого включённого канала.
+1. Hikvision-node разворачивается первой;
+2. установщик генерирует credentials и создаёт `/root/newdomofon-hik-master-registration.env`;
+3. оператор открывает `Администрирование → Ноды → Создать node`;
+4. выбирает тип `Hikvision node` и переносит значения из registration file;
+5. node начинает heartbeat/config polling и получает назначенные Hikvision-устройства с master.
+
+Подробно: [docs/MANUAL_MASTER_PAIRING.md](docs/MANUAL_MASTER_PAIRING.md).
+
+Локальный control API сохраняется для диагностики и аварийного управления, но после pairing master является источником назначений устройств.
 
 ## Локальная разработка
 
@@ -115,11 +105,17 @@ npm start
 
 ## Production
 
-Production: Debian 12, Node.js 22, FFmpeg, systemd. Репозиторий устанавливается из ZIP/TAR без Git на сервере.
+Production: Debian 12, Node.js 22, FFmpeg, systemd. Репозиторий устанавливается из ZIP/TAR без Git на сервере. Node можно установить до создания записи на master.
 
 ```bash
 cd /root/newdomofon-video-hik-main
 bash scripts/install.sh
+```
+
+Установщик создаёт root-only файл для последующего ввода credentials на master:
+
+```text
+/root/newdomofon-hik-master-registration.env
 ```
 
 Обновление:
@@ -140,6 +136,6 @@ bash scripts/update-installed-project.sh
 /var/lib/newdomofon-video-hik/tmp/
 ```
 
-## Текущий этап
+## Интеграционная граница
 
-Репозиторий содержит первую рабочую реализацию Hikvision-node и contract v1. Для подключения к web UI и PostgreSQL требуется отдельный master-адаптер: master должен хранить устройства, выбирать `node|device`, отправлять конфигурацию в control API и проксировать media API. ISAPI-запросы при этом остаются только в этом репозитории.
+Master хранит запись node, назначения Hikvision-устройств и синхронизированные метаданные каналов. Hikvision-node выполняет heartbeat/config/commands, ISAPI discovery, live и архив. ISAPI-запросы остаются только в этом репозитории.

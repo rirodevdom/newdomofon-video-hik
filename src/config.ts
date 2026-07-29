@@ -1,8 +1,16 @@
 import path from 'node:path';
 
-function required(name: string): string {
-  const value = String(process.env[name] || '').trim();
-  if (!value) throw new Error(`${name} is required`);
+function firstEnv(...names: string[]): string {
+  for (const name of names) {
+    const value = String(process.env[name] || '').trim();
+    if (value) return value;
+  }
+  return '';
+}
+
+function requiredAny(...names: string[]): string {
+  const value = firstEnv(...names);
+  if (!value) throw new Error(`${names.join(' or ')} is required`);
   return value;
 }
 
@@ -20,14 +28,27 @@ function boolEnv(name: string, fallback: boolean): boolean {
 }
 
 const root = process.env.HIK_NODE_ROOT || '/var/lib/newdomofon-video-hik';
+const nodeToken = requiredAny('DVR_NODE_TOKEN', 'HIK_NODE_TOKEN');
+const mediaSecret = requiredAny('DVR_NODE_MEDIA_SECRET', 'HIK_NODE_MEDIA_SECRET');
 
 export const config = {
   env: process.env.NODE_ENV || 'production',
   port: numberEnv('HIK_NODE_PORT', 3020, 1),
   host: process.env.HIK_NODE_HOST || '0.0.0.0',
-  agentToken: required('HIK_NODE_TOKEN'),
-  mediaSecret: required('HIK_NODE_MEDIA_SECRET'),
-  stateKey: required('HIK_NODE_STATE_KEY'),
+
+  // The same operator-defined credentials are entered in the master UI.
+  masterUrl: firstEnv('DVR_MASTER_URL', 'HIK_MASTER_URL').replace(/\/+$/, ''),
+  nodeId: firstEnv('DVR_NODE_ID', 'HIK_NODE_ID'),
+  nodeToken,
+  agentToken: nodeToken,
+  mediaSecret,
+  publicBaseUrl: firstEnv('DVR_NODE_PUBLIC_BASE_URL', 'HIK_NODE_PUBLIC_BASE_URL').replace(/\/+$/, ''),
+  internalUrl: firstEnv('DVR_NODE_INTERNAL_URL', 'HIK_NODE_INTERNAL_URL').replace(/\/+$/, ''),
+  masterRequestTimeoutMs: numberEnv('HIK_MASTER_REQUEST_TIMEOUT_MS', 10_000, 1000),
+  masterPollSeconds: numberEnv('HIK_MASTER_POLL_SECONDS', 20, 5),
+  heartbeatSeconds: numberEnv('HIK_HEARTBEAT_SECONDS', 20, 5),
+
+  stateKey: requiredAny('HIK_NODE_STATE_KEY'),
   root,
   stateFile: process.env.HIK_NODE_STATE_FILE || path.join(root, 'state.enc.json'),
   archiveRoot: process.env.HIK_NODE_ARCHIVE_ROOT || path.join(root, 'archive'),
@@ -50,3 +71,7 @@ export const config = {
   rtspTransport: process.env.HIK_RTSP_TRANSPORT || 'tcp',
   logLevel: process.env.HIK_FFMPEG_LOGLEVEL || 'warning'
 } as const;
+
+export function isMasterPairingConfigured(): boolean {
+  return Boolean(config.masterUrl && config.nodeId && config.nodeToken && config.publicBaseUrl && config.internalUrl);
+}

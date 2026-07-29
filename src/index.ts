@@ -6,6 +6,7 @@ import { HikvisionNodeService } from './service.js';
 import { createControlRouter } from './http/controlRoutes.js';
 import { createMediaRouter } from './http/mediaRoutes.js';
 import { DeviceArchiveSessionManager } from './archive/deviceArchiveSessions.js';
+import { startMasterAgent } from './master/nodeClient.js';
 
 async function main(): Promise<void> {
   await Promise.all([
@@ -20,6 +21,7 @@ async function main(): Promise<void> {
   const sessions = new DeviceArchiveSessionManager();
   await service.initialize();
   sessions.startCleanup();
+  const masterAgent = startMasterAgent(service);
 
   const app = express();
   app.disable('x-powered-by');
@@ -29,12 +31,14 @@ async function main(): Promise<void> {
     res.json({
       ok: true,
       service: 'newdomofon-video-hik',
-      version: '0.1.0',
+      version: '0.2.0',
       devices: service.listDevices().length,
       channels: service.allChannels().length,
       recorders: service.recorderManager.allStatuses().filter((item) => item.running).length,
       archive_policy: ['node', 'device'],
-      isapi: true
+      isapi: true,
+      master_pairing: masterAgent.enabled,
+      node_kind: 'hikvision'
     });
   });
 
@@ -53,6 +57,7 @@ async function main(): Promise<void> {
 
   const shutdown = (signal: string) => {
     console.log(`Received ${signal}; shutting down`);
+    masterAgent.stop();
     sessions.stop();
     service.shutdown();
     server.close(() => process.exit(0));
