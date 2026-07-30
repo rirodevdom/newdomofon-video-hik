@@ -7,7 +7,7 @@
     "node": ">=22"
   },
   "scripts": {
-    "prebuild": "python3 scripts/patch-live-segment-storage.py --project-dir . && python3 scripts/patch-fast-media-startup.py --project-dir . && python3 scripts/patch-archive-program-date-time.py --project-dir .",
+    "prebuild": "python3 scripts/patch-live-segment-storage.py --project-dir . && python3 scripts/patch-fast-media-startup.py --project-dir . && python3 scripts/patch-media-readiness.py --project-dir . && python3 scripts/patch-archive-program-date-time.py --project-dir .",
     "build": "tsc -p tsconfig.json",
     "start": "node dist/index.js",
     "dev": "tsx watch src/index.ts",
