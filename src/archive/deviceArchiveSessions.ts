@@ -16,9 +16,10 @@ interface ArchiveSession {
   dir: string;
   playlist: string;
   process: ChildProcess | null;
-  status: 'preparing' | 'ready' | 'error' | 'cancelled';
+  status: 'preparing' | 'ready' | 'error' | 'retired' | 'cancelled';
   error: string | null;
   cancelled: boolean;
+  retiredAt: number | null;
   createdAt: number;
   lastAccessAt: number;
 }
@@ -26,6 +27,8 @@ interface ArchiveSession {
 const CANDIDATE_STARTUP_TIMEOUT_MS = 8_000;
 const SESSION_READY_TIMEOUT_MS = 25_000;
 const PROCESS_STOP_GRACE_MS = 1_000;
+const RETIRED_SESSION_GRACE_MS = 45_000;
+const CLEANUP_INTERVAL_MS = 10_000;
 
 async function exists(file: string): Promise<boolean> {
   try {
@@ -41,7 +44,20 @@ export function shouldRetireArchiveSession(
   channelId: string,
   keepId: string
 ): boolean {
-  return session.channelId === channelId && session.id !== keepId && session.status !== 'cancelled';
+  return session.channelId === channelId
+    && session.id !== keepId
+    && session.status !== 'retired'
+    && session.status !== 'cancelled';
+}
+
+export function shouldDeleteRetiredArchiveSession(
+  session: Pick<ArchiveSession, 'status' | 'retiredAt'>,
+  now: number,
+  graceMs = RETIRED_SESSION_GRACE_MS
+): boolean {
+  return session.status === 'retired'
+    && session.retiredAt !== null
+    && now - session.retiredAt >= graceMs;
 }
 
 export class DeviceArchiveSessionManager {
@@ -50,7 +66,7 @@ export class DeviceArchiveSessionManager {
 
   startCleanup(): void {
     if (this.cleanupTimer) return;
-    this.cleanupTimer = setInterval(() => { void this.cleanup(); }, 60_000);
+    this.cleanupTimer = setInterval(() => { void this.cleanup(); }, CLEANUP_INTERVAL_MS);
     this.cleanupTimer.unref?.();
   }
 
@@ -79,14 +95,14 @@ export class DeviceArchiveSessionManager {
     const end = requestedEnd > maxEnd ? maxEnd : requestedEnd;
     const id = this.sessionKey(channel.id, start, end);
     const existing = this.sessions.get(id);
-    if (existing && !existing.cancelled && existing.status !== 'error') {
+    if (existing && !existing.cancelled && existing.status !== 'error' && existing.status !== 'retired') {
       existing.lastAccessAt = Date.now();
       await this.waitReady(existing);
       return existing;
     }
 
     if (existing) {
-      await this.terminateAndRemove(existing, 'Restarting failed archive session');
+      await this.terminateAndRemove(existing, 'Restarting inactive archive session');
     }
     await this.retireSuperseded(channel.id, id);
 
@@ -104,6 +120,7 @@ export class DeviceArchiveSessionManager {
       status: 'preparing',
       error: null,
       cancelled: false,
+      retiredAt: null,
       createdAt: Date.now(),
       lastAccessAt: Date.now()
     };
@@ -115,7 +132,7 @@ export class DeviceArchiveSessionManager {
 
   get(channelId: string, sessionId: string): ArchiveSession | null {
     const session = this.sessions.get(sessionId);
-    if (!session || session.channelId !== channelId || session.cancelled || session.status === 'error') return null;
+    if (!session || session.channelId !== channelId || session.status === 'error' || session.status === 'cancelled') return null;
     session.lastAccessAt = Date.now();
     return session;
   }
@@ -123,30 +140,43 @@ export class DeviceArchiveSessionManager {
   private async retireSuperseded(channelId: string, keepId: string): Promise<void> {
     const stale = [...this.sessions.values()].filter((session) => shouldRetireArchiveSession(session, channelId, keepId));
     for (const session of stale) {
-      console.log(`[device-archive:${channelId}] cancelling superseded session ${session.id}`);
-      await this.terminateAndRemove(session, 'Superseded by a newer archive seek');
+      console.log(`[device-archive:${channelId}] retiring superseded session ${session.id} for ${RETIRED_SESSION_GRACE_MS} ms`);
+      await this.retireForGrace(session, 'Superseded by a newer archive seek');
     }
+  }
+
+  private async stopProcess(session: ArchiveSession): Promise<void> {
+    const child = session.process;
+    session.process = null;
+    if (!child || child.exitCode !== null) return;
+
+    await new Promise<void>((resolve) => {
+      const timer = setTimeout(resolve, PROCESS_STOP_GRACE_MS);
+      child.once('exit', () => {
+        clearTimeout(timer);
+        resolve();
+      });
+      child.kill('SIGTERM');
+    });
+    if (child.exitCode === null) child.kill('SIGKILL');
+  }
+
+  private async retireForGrace(session: ArchiveSession, reason: string): Promise<void> {
+    session.cancelled = true;
+    session.status = 'retired';
+    session.error = reason;
+    session.retiredAt = Date.now();
+    await this.stopProcess(session);
+    // Keep the playlist and completed segments addressable while the browser
+    // destroys the previous HLS instance. Removing them immediately produces
+    // harmless but noisy 404 responses and can surface as player errors.
   }
 
   private async terminateAndRemove(session: ArchiveSession, reason: string): Promise<void> {
     session.cancelled = true;
     session.status = 'cancelled';
     session.error = reason;
-    const child = session.process;
-    session.process = null;
-
-    if (child && child.exitCode === null) {
-      await new Promise<void>((resolve) => {
-        const timer = setTimeout(resolve, PROCESS_STOP_GRACE_MS);
-        child.once('exit', () => {
-          clearTimeout(timer);
-          resolve();
-        });
-        child.kill('SIGTERM');
-      });
-      if (child.exitCode === null) child.kill('SIGKILL');
-    }
-
+    await this.stopProcess(session);
     this.sessions.delete(session.id);
     await fs.rm(session.dir, { recursive: true, force: true }).catch(() => undefined);
   }
@@ -239,7 +269,7 @@ export class DeviceArchiveSessionManager {
   private async waitReady(session: ArchiveSession): Promise<void> {
     const deadline = Date.now() + SESSION_READY_TIMEOUT_MS;
     while (Date.now() < deadline) {
-      if (session.cancelled || session.status === 'cancelled') {
+      if (session.cancelled || session.status === 'cancelled' || session.status === 'retired') {
         throw new Error(session.error || 'Archive session was superseded by a newer seek');
       }
       if (session.status === 'error') throw new Error(session.error || 'Device archive session failed');
@@ -257,6 +287,11 @@ export class DeviceArchiveSessionManager {
   private async cleanup(): Promise<void> {
     const now = Date.now();
     for (const session of [...this.sessions.values()]) {
+      if (shouldDeleteRetiredArchiveSession(session, now)) {
+        await this.terminateAndRemove(session, 'Retired archive session grace period expired');
+        continue;
+      }
+      if (session.status === 'retired') continue;
       if (now - session.lastAccessAt < config.deviceArchiveSessionKeepMs) continue;
       await this.terminateAndRemove(session, 'Archive session expired');
     }
