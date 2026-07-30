@@ -7,9 +7,27 @@ ENV_FILE="${ENV_FILE:-/etc/newdomofon-video-hik/app.env}"
 BACKUP_ROOT="${BACKUP_ROOT:-/opt/newdomofon-video-hik-backups}"
 STAMP="$(date +%Y%m%d-%H%M%S)"
 BACKUP_DIR="$BACKUP_ROOT/update-$STAMP"
+SERVICE_NAME="newdomofon-video-hik.service"
+SERVICE_STOPPED=0
 
 fail() { echo "ERROR: $*" >&2; exit 1; }
 log() { printf '\n[%s] %s\n' "$(date '+%F %T')" "$*"; }
+
+recover_service_on_failure() {
+  local status=$?
+  trap - EXIT
+  if (( status != 0 && SERVICE_STOPPED == 1 )); then
+    echo >&2
+    echo "Update failed; attempting to restore ${SERVICE_NAME}" >&2
+    systemctl daemon-reload >/dev/null 2>&1 || true
+    if ! systemctl is-active --quiet "$SERVICE_NAME"; then
+      systemctl start "$SERVICE_NAME" >/dev/null 2>&1 || true
+    fi
+    systemctl is-active "$SERVICE_NAME" 2>/dev/null || true
+  fi
+  exit "$status"
+}
+trap recover_service_on_failure EXIT
 
 [[ "$(id -u)" -eq 0 ]] || fail "Run as root"
 [[ -d "$PROJECT_DIR" ]] || fail "Installed project not found: $PROJECT_DIR"
@@ -21,7 +39,8 @@ cp -a "$ENV_FILE" "$BACKUP_DIR/app.env"
   && cp -a /var/lib/newdomofon-video-hik/state.enc.json "$BACKUP_DIR/state.enc.json" || true
 
 log "Stopping service"
-systemctl stop newdomofon-video-hik.service
+systemctl stop "$SERVICE_NAME"
+SERVICE_STOPPED=1
 
 log "Updating project from archive directory"
 rsync -a --delete \
@@ -33,26 +52,32 @@ rsync -a --delete \
 cd "$PROJECT_DIR"
 gzip -dc package-lock.json.gz > package-lock.json
 npm ci --include=dev
+
+# The application config validates node credentials at module-import time.
+# Load the installed environment for checks while keeping tests independently
+# runnable with their own defaults.
+set -a
+. "$ENV_FILE"
+set +a
 npm run check
+
 npm prune --omit=dev
 chown -R root:root "$PROJECT_DIR"
 
 install -m 0644 "$PROJECT_DIR/deploy/systemd/newdomofon-video-hik.service" /etc/systemd/system/newdomofon-video-hik.service
 systemctl daemon-reload
-systemctl restart newdomofon-video-hik.service
+systemctl restart "$SERVICE_NAME"
 
-set -a
-. "$ENV_FILE"
-set +a
 HEALTH_PORT="${HIK_NODE_PORT:-3020}"
 for _ in $(seq 1 30); do
   if curl -fsS "http://127.0.0.1:${HEALTH_PORT}/health"; then
     echo
+    SERVICE_STOPPED=0
     log "Update completed; backup: $BACKUP_DIR"
     exit 0
   fi
   sleep 1
 done
 
-journalctl -u newdomofon-video-hik.service -n 120 --no-pager
+journalctl -u "$SERVICE_NAME" -n 120 --no-pager
 fail "Updated service did not become healthy"
