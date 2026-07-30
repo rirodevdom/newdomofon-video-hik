@@ -1,7 +1,18 @@
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import test from 'node:test';
-import { verifyMediaToken, type MediaScope } from '../../src/http/mediaToken.js';
+
+type MediaScope = 'live' | 'archive' | 'snapshot';
+
+const nodeToken = process.env.DVR_NODE_TOKEN || 'test-node-token-0123456789';
+const mediaSecret = process.env.DVR_NODE_MEDIA_SECRET || 'test-media-secret-0123456789';
+process.env.DVR_NODE_TOKEN = nodeToken;
+process.env.DVR_NODE_MEDIA_SECRET = mediaSecret;
+process.env.HIK_NODE_STATE_KEY ||= '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
+
+// config.ts validates required environment variables while the module graph is
+// loaded, so import the implementation only after installing test defaults.
+const { verifyMediaToken } = await import('../../src/http/mediaToken.js');
 
 function sign(secret: string, channelId: string, scopes: MediaScope[]): string {
   const now = Math.floor(Date.now() / 1000);
@@ -11,16 +22,12 @@ function sign(secret: string, channelId: string, scopes: MediaScope[]): string {
 }
 
 test('accepts a media token signed with SHA-256(DVR_NODE_TOKEN)', () => {
-  const nodeToken = String(process.env.DVR_NODE_TOKEN || '');
-  assert.ok(nodeToken, 'DVR_NODE_TOKEN is required for this test');
   const derived = crypto.createHash('sha256').update(nodeToken).digest('hex');
   const payload = verifyMediaToken(sign(derived, 'device:1', ['live']), 'device:1', 'live');
   assert.equal(payload.channel_id, 'device:1');
 });
 
 test('still accepts the configured DVR_NODE_MEDIA_SECRET', () => {
-  const mediaSecret = String(process.env.DVR_NODE_MEDIA_SECRET || '');
-  assert.ok(mediaSecret, 'DVR_NODE_MEDIA_SECRET is required for this test');
   const payload = verifyMediaToken(sign(mediaSecret, 'device:2', ['archive']), 'device:2', 'archive');
   assert.equal(payload.channel_id, 'device:2');
 });
