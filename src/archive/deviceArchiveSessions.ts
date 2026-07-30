@@ -16,11 +16,16 @@ interface ArchiveSession {
   dir: string;
   playlist: string;
   process: ChildProcess | null;
-  status: 'preparing' | 'ready' | 'error';
+  status: 'preparing' | 'ready' | 'error' | 'cancelled';
   error: string | null;
+  cancelled: boolean;
   createdAt: number;
   lastAccessAt: number;
 }
+
+const CANDIDATE_STARTUP_TIMEOUT_MS = 8_000;
+const SESSION_READY_TIMEOUT_MS = 25_000;
+const PROCESS_STOP_GRACE_MS = 1_000;
 
 async function exists(file: string): Promise<boolean> {
   try {
@@ -29,6 +34,14 @@ async function exists(file: string): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+export function shouldRetireArchiveSession(
+  session: Pick<ArchiveSession, 'id' | 'channelId' | 'status'>,
+  channelId: string,
+  keepId: string
+): boolean {
+  return session.channelId === channelId && session.id !== keepId && session.status !== 'cancelled';
 }
 
 export class DeviceArchiveSessionManager {
@@ -44,7 +57,11 @@ export class DeviceArchiveSessionManager {
   stop(): void {
     if (this.cleanupTimer) clearInterval(this.cleanupTimer);
     this.cleanupTimer = null;
-    for (const session of this.sessions.values()) session.process?.kill('SIGTERM');
+    for (const session of this.sessions.values()) {
+      session.cancelled = true;
+      session.status = 'cancelled';
+      session.process?.kill('SIGTERM');
+    }
     this.sessions.clear();
   }
 
@@ -62,11 +79,16 @@ export class DeviceArchiveSessionManager {
     const end = requestedEnd > maxEnd ? maxEnd : requestedEnd;
     const id = this.sessionKey(channel.id, start, end);
     const existing = this.sessions.get(id);
-    if (existing && existing.status !== 'error') {
+    if (existing && !existing.cancelled && existing.status !== 'error') {
       existing.lastAccessAt = Date.now();
       await this.waitReady(existing);
       return existing;
     }
+
+    if (existing) {
+      await this.terminateAndRemove(existing, 'Restarting failed archive session');
+    }
+    await this.retireSuperseded(channel.id, id);
 
     const dir = path.join(config.tempRoot, 'device-archive', safeId(channel.id), id);
     await fs.mkdir(dir, { recursive: true, mode: 0o750 });
@@ -81,6 +103,7 @@ export class DeviceArchiveSessionManager {
       process: null,
       status: 'preparing',
       error: null,
+      cancelled: false,
       createdAt: Date.now(),
       lastAccessAt: Date.now()
     };
@@ -92,23 +115,59 @@ export class DeviceArchiveSessionManager {
 
   get(channelId: string, sessionId: string): ArchiveSession | null {
     const session = this.sessions.get(sessionId);
-    if (!session || session.channelId !== channelId) return null;
+    if (!session || session.channelId !== channelId || session.cancelled || session.status === 'error') return null;
     session.lastAccessAt = Date.now();
     return session;
   }
 
+  private async retireSuperseded(channelId: string, keepId: string): Promise<void> {
+    const stale = [...this.sessions.values()].filter((session) => shouldRetireArchiveSession(session, channelId, keepId));
+    for (const session of stale) {
+      console.log(`[device-archive:${channelId}] cancelling superseded session ${session.id}`);
+      await this.terminateAndRemove(session, 'Superseded by a newer archive seek');
+    }
+  }
+
+  private async terminateAndRemove(session: ArchiveSession, reason: string): Promise<void> {
+    session.cancelled = true;
+    session.status = 'cancelled';
+    session.error = reason;
+    const child = session.process;
+    session.process = null;
+
+    if (child && child.exitCode === null) {
+      await new Promise<void>((resolve) => {
+        const timer = setTimeout(resolve, PROCESS_STOP_GRACE_MS);
+        child.once('exit', () => {
+          clearTimeout(timer);
+          resolve();
+        });
+        child.kill('SIGTERM');
+      });
+      if (child.exitCode === null) child.kill('SIGKILL');
+    }
+
+    this.sessions.delete(session.id);
+    await fs.rm(session.dir, { recursive: true, force: true }).catch(() => undefined);
+  }
+
   private async spawn(device: HikvisionDeviceConfig, channel: HikvisionChannel, session: ArchiveSession): Promise<void> {
     const candidates = await devicePlaybackCandidates(device, channel, session.start, session.end);
+    if (session.cancelled) return;
     if (!candidates.length) throw new Error('No device archive playback candidates');
     const duration = Math.max(1, Math.ceil((session.end.getTime() - session.start.getTime()) / 1000));
 
     const attempt = (index: number): void => {
+      if (session.cancelled) return;
       const input = candidates[index];
       if (!input) {
         session.status = 'error';
         session.error = 'All device archive playback candidates failed';
         return;
       }
+
+      const startedAt = Date.now();
+      console.log(`[device-archive:${channel.id}] starting candidate ${index + 1}/${candidates.length} for session ${session.id}`);
       const child = spawn(config.ffmpegPath, [
         '-hide_banner',
         '-loglevel', config.logLevel,
@@ -134,50 +193,72 @@ export class DeviceArchiveSessionManager {
       ], { cwd: session.dir, stdio: ['ignore', 'ignore', 'pipe'] });
       session.process = child;
       let stderr = '';
+      let completed = false;
       child.stderr.on('data', (chunk) => { stderr = `${stderr}\n${String(chunk)}`.slice(-5000); });
-      child.once('exit', async (code) => {
-        session.process = null;
+
+      const finishAttempt = async (code: number | null, timedOut = false): Promise<void> => {
+        if (completed) return;
+        completed = true;
+        clearTimeout(startupTimer);
+        if (timedOut && child.exitCode === null) child.kill('SIGTERM');
+        if (session.process === child) session.process = null;
+        if (session.cancelled) return;
+
         if (await exists(session.playlist)) {
           session.status = 'ready';
+          console.log(`[device-archive:${channel.id}] session ${session.id} ready in ${Date.now() - startedAt} ms`);
           return;
         }
+
         if (index + 1 < candidates.length) {
+          console.warn(`[device-archive:${channel.id}] candidate ${index + 1} failed before playlist${timedOut ? ' (startup timeout)' : ` (exit ${code})`}; trying next`);
           await fs.rm(session.dir, { recursive: true, force: true });
           await fs.mkdir(session.dir, { recursive: true, mode: 0o750 });
           attempt(index + 1);
           return;
         }
+
         session.status = 'error';
-        session.error = stderr.trim() || `ffmpeg exited ${code}`;
-      });
+        session.error = stderr.trim() || (timedOut
+          ? `Archive candidate startup exceeded ${CANDIDATE_STARTUP_TIMEOUT_MS} ms`
+          : `ffmpeg exited ${code}`);
+      };
+
+      const startupTimer = setTimeout(() => {
+        void (async () => {
+          if (session.cancelled || await exists(session.playlist)) return;
+          await finishAttempt(null, true);
+        })();
+      }, CANDIDATE_STARTUP_TIMEOUT_MS);
+
+      child.once('exit', (code) => { void finishAttempt(code); });
     };
     attempt(0);
   }
 
   private async waitReady(session: ArchiveSession): Promise<void> {
-    const deadline = Date.now() + 25_000;
+    const deadline = Date.now() + SESSION_READY_TIMEOUT_MS;
     while (Date.now() < deadline) {
+      if (session.cancelled || session.status === 'cancelled') {
+        throw new Error(session.error || 'Archive session was superseded by a newer seek');
+      }
       if (session.status === 'error') throw new Error(session.error || 'Device archive session failed');
       if (await exists(session.playlist)) {
         session.status = 'ready';
         return;
       }
-      await new Promise((resolve) => setTimeout(resolve, 250));
+      await new Promise((resolve) => setTimeout(resolve, 200));
     }
-    session.process?.kill('SIGTERM');
-    session.process = null;
-    session.status = 'error';
-    session.error = 'Device archive session did not produce a playlist in time';
-    throw new Error(session.error);
+
+    await this.terminateAndRemove(session, 'Device archive session did not produce a playlist in time');
+    throw new Error('Device archive session did not produce a playlist in time');
   }
 
   private async cleanup(): Promise<void> {
     const now = Date.now();
-    for (const [id, session] of this.sessions) {
+    for (const session of [...this.sessions.values()]) {
       if (now - session.lastAccessAt < config.deviceArchiveSessionKeepMs) continue;
-      session.process?.kill('SIGTERM');
-      this.sessions.delete(id);
-      await fs.rm(session.dir, { recursive: true, force: true }).catch(() => undefined);
+      await this.terminateAndRemove(session, 'Archive session expired');
     }
   }
 }
