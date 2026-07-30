@@ -31,6 +31,17 @@ jobs:
           grep -q 'agentDerivedMediaSecret' src/http/mediaToken.ts
           test -s test/http/mediaToken.test.ts
           test -s docs/MANUAL_MASTER_PAIRING.md
+      - name: Validate fast media source patch
+        run: |
+          python3 -m py_compile scripts/patch-fast-media-startup.py
+          python3 scripts/patch-fast-media-startup.py --project-dir .
+          before="$(sha256sum src/config.ts src/media/rtsp.ts src/media/recorderManager.ts src/archive/deviceArchive.ts src/archive/deviceArchiveSessions.ts | sha256sum | awk '{print $1}')"
+          python3 scripts/patch-fast-media-startup.py --project-dir .
+          after="$(sha256sum src/config.ts src/media/rtsp.ts src/media/recorderManager.ts src/archive/deviceArchive.ts src/archive/deviceArchiveSessions.ts | sha256sum | awk '{print $1}')"
+          test "$before" = "$after"
+          grep -q "hls_segment_type', 'fmp4" src/archive/deviceArchiveSessions.ts
+          grep -q "selectLiveStreamId" src/media/recorderManager.ts
+          grep -q "archiveRangeCacheMs" src/archive/deviceArchive.ts
       - name: Install locked dependencies
         run: |
           gzip -dc package-lock.json.gz > package-lock.json
