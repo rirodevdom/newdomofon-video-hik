@@ -29,6 +29,29 @@ recover_service_on_failure() {
 }
 trap recover_service_on_failure EXIT
 
+health_ready() {
+  python3 -c '
+import json, sys
+try:
+    data = json.load(sys.stdin)
+except Exception:
+    raise SystemExit(1)
+if data.get("ok") is not True:
+    raise SystemExit(1)
+devices = int(data.get("devices") or 0)
+channels = int(data.get("channels") or 0)
+recorders = int(data.get("recorders") or 0)
+paired = bool(data.get("master_pairing"))
+# A paired node with a restored device must not be declared ready while its
+# channel state is empty. When channels exist, wait for at least one live
+# recorder so the first browser request cannot race service startup.
+if paired and devices > 0 and channels <= 0:
+    raise SystemExit(1)
+if channels > 0 and recorders <= 0:
+    raise SystemExit(1)
+' 
+}
+
 [[ "$(id -u)" -eq 0 ]] || fail "Run as root"
 [[ -d "$PROJECT_DIR" ]] || fail "Installed project not found: $PROJECT_DIR"
 [[ -f "$ENV_FILE" ]] || fail "Environment file not found: $ENV_FILE"
@@ -69,15 +92,18 @@ systemctl daemon-reload
 systemctl restart "$SERVICE_NAME"
 
 HEALTH_PORT="${HIK_NODE_PORT:-3020}"
-for _ in $(seq 1 30); do
-  if curl -fsS "http://127.0.0.1:${HEALTH_PORT}/health"; then
-    echo
+LAST_HEALTH=''
+for _ in $(seq 1 60); do
+  LAST_HEALTH="$(curl -fsS "http://127.0.0.1:${HEALTH_PORT}/health" 2>/dev/null || true)"
+  if [[ -n "$LAST_HEALTH" ]] && health_ready <<<"$LAST_HEALTH"; then
+    printf '%s\n' "$LAST_HEALTH"
     SERVICE_STOPPED=0
-    log "Update completed; backup: $BACKUP_DIR"
+    log "Update completed; channels and recorders recovered; backup: $BACKUP_DIR"
     exit 0
   fi
   sleep 1
 done
 
-journalctl -u "$SERVICE_NAME" -n 120 --no-pager
-fail "Updated service did not become healthy"
+printf 'Last health response: %s\n' "${LAST_HEALTH:-<none>}" >&2
+journalctl -u "$SERVICE_NAME" -n 160 --no-pager
+fail "Updated service started but did not recover channels and recorders"
