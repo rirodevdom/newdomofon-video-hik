@@ -162,7 +162,8 @@ export class HikvisionNodeService {
     for (const configValue of configs) {
       const config = structuredClone(configValue);
       const current = existing.get(config.id);
-      if (!current || JSON.stringify(current.config) !== JSON.stringify(config)) changedIds.add(config.id);
+      const needsDiscovery = !current || current.channels.length === 0 || Boolean(current.last_sync_error);
+      if (needsDiscovery || JSON.stringify(current?.config) !== JSON.stringify(config)) changedIds.add(config.id);
       next.push(current ? { ...current, config } : {
         config,
         device_info: {},
