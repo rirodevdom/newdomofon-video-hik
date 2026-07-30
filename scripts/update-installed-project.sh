@@ -41,13 +41,17 @@ if data.get("ok") is not True:
 devices = int(data.get("devices") or 0)
 channels = int(data.get("channels") or 0)
 recorders = int(data.get("recorders") or 0)
+live_expected = int(data.get("live_expected") or 0)
+live_ready = int(data.get("live_ready") or 0)
 paired = bool(data.get("master_pairing"))
 # A paired node with a restored device must not be declared ready while its
-# channel state is empty. When channels exist, wait for at least one live
-# recorder so the first browser request cannot race service startup.
+# channel state is empty. A recorder process is not enough: wait until every
+# expected channel has produced a fresh live.m3u8 from the current process.
 if paired and devices > 0 and channels <= 0:
     raise SystemExit(1)
 if channels > 0 and recorders <= 0:
+    raise SystemExit(1)
+if live_expected > 0 and live_ready < live_expected:
     raise SystemExit(1)
 ' 
 }
@@ -93,17 +97,17 @@ systemctl restart "$SERVICE_NAME"
 
 HEALTH_PORT="${HIK_NODE_PORT:-3020}"
 LAST_HEALTH=''
-for _ in $(seq 1 60); do
+for _ in $(seq 1 90); do
   LAST_HEALTH="$(curl -fsS "http://127.0.0.1:${HEALTH_PORT}/health" 2>/dev/null || true)"
   if [[ -n "$LAST_HEALTH" ]] && health_ready <<<"$LAST_HEALTH"; then
     printf '%s\n' "$LAST_HEALTH"
     SERVICE_STOPPED=0
-    log "Update completed; channels and recorders recovered; backup: $BACKUP_DIR"
+    log "Update completed; channels and fresh live playlists recovered; backup: $BACKUP_DIR"
     exit 0
   fi
   sleep 1
 done
 
 printf 'Last health response: %s\n' "${LAST_HEALTH:-<none>}" >&2
-journalctl -u "$SERVICE_NAME" -n 160 --no-pager
-fail "Updated service started but did not recover channels and recorders"
+journalctl -u "$SERVICE_NAME" -n 200 --no-pager
+fail "Updated service started but did not recover channels and fresh live playlists"
