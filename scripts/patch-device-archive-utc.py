@@ -19,7 +19,7 @@ def patch_types(path: Path) -> None:
     text = replace_once(
         text,
         "  playback_uri: string;\n  track_id: string;",
-        "  playback_uri: string;\n  original_playback_uri?: string;\n  track_id: string;",
+        "  playback_uri: string;\n  original_playback_uri: string | undefined;\n  track_id: string;",
         "device archive original URI type",
     )
     path.write_text(text, encoding="utf-8")
@@ -82,15 +82,15 @@ export function buildArchiveSearchRequestXml(
     if (url.protocol !== 'rtsp:') return playbackRtspFallback(device, trackId, start, end);
     if (['0.0.0.0', '127.0.0.1', 'localhost'].includes(url.hostname.toLowerCase())) url.hostname = device.host;
     if (!url.port) url.port = String(device.rtsp_port);
-    if (!url.searchParams.has('starttime')) url.searchParams.set('starttime', start.toISOString().replace(/[-:]/g, '').replace(/\\.\\d{3}Z$/, 'Z'));
-    if (!url.searchParams.has('endtime')) url.searchParams.set('endtime', end.toISOString().replace(/[-:]/g, '').replace(/\\.\\d{3}Z$/, 'Z'));
+    if (!url.searchParams.has('starttime')) url.searchParams.set('starttime', start.toISOString().replace(/[-:]/g, '').replace(/\.\d{3}Z$/, 'Z'));
+    if (!url.searchParams.has('endtime')) url.searchParams.set('endtime', end.toISOString().replace(/[-:]/g, '').replace(/\.\d{3}Z$/, 'Z'));
     return injectRtspCredentials(url.toString(), device);
   } catch {
     return playbackRtspFallback(device, trackId, start, end);
   }
 }'''
     new_normalize = '''function compactPlaybackTime(date: Date): string {
-  return date.toISOString().replace(/[-:]/g, '').replace(/\\.\\d{3}Z$/, 'Z');
+  return date.toISOString().replace(/[-:]/g, '').replace(/\.\d{3}Z$/, 'Z');
 }
 
 function normalizeOriginalPlaybackUri(raw: string, device: HikvisionDeviceConfig): string | null {
