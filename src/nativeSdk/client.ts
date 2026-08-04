@@ -92,8 +92,8 @@ export function spawnNativeStream(
     ...extra
   };
   if (mode !== 'events') {
-    env.HIK_SDK_CHANNEL = String(sdkChannel(channel));
-    env.HIK_SDK_STREAM_TYPE = '0';
+    if (!env.HIK_SDK_CHANNEL) env.HIK_SDK_CHANNEL = String(sdkChannel(channel));
+    if (!env.HIK_SDK_STREAM_TYPE) env.HIK_SDK_STREAM_TYPE = '0';
   }
   return spawn(config.nativeSdkWorker, [mode], {
     env,
