@@ -65,6 +65,14 @@ def patch_index(path: Path) -> None:
     path.write_text(text, encoding="utf-8")
 
 
+def patch_service(path: Path) -> None:
+    text = path.read_text(encoding="utf-8")
+    old = """  async initialize(): Promise<void> {\n    this.state = await this.store.load();\n    await this.reconcileRecorders();"""
+    new = """  async initialize(): Promise<void> {\n    this.state = await this.store.load();\n    if (nativeSdkActive()) {\n      // Refresh HCNetSDK channel numbers (notably digital channels beginning at\n      // 33 on many NVRs) before starting any live recorder processes.\n      await this.syncAll();\n    } else {\n      await this.reconcileRecorders();\n    }"""
+    text = replace_once(text, old, new, "native SDK initial discovery")
+    path.write_text(text, encoding="utf-8")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument('--project-dir', default='.')
@@ -72,6 +80,7 @@ def main() -> None:
     root = Path(args.project_dir).resolve()
     patch_media(root / 'src/http/mediaRoutes.ts')
     patch_index(root / 'src/index.ts')
+    patch_service(root / 'src/service.ts')
 
 
 if __name__ == '__main__':
