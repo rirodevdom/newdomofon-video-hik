@@ -36,7 +36,6 @@ export const config = {
   port: numberEnv('HIK_NODE_PORT', 3020, 1),
   host: process.env.HIK_NODE_HOST || '0.0.0.0',
 
-  // The same operator-defined credentials are entered in the master UI.
   masterUrl: firstEnv('DVR_MASTER_URL', 'HIK_MASTER_URL').replace(/\/+$/, ''),
   nodeId: firstEnv('DVR_NODE_ID', 'HIK_NODE_ID'),
   nodeToken,
@@ -57,13 +56,13 @@ export const config = {
   ffmpegPath: process.env.FFMPEG_PATH || '/usr/bin/ffmpeg',
   ffprobePath: process.env.FFPROBE_PATH || '/usr/bin/ffprobe',
 
-  // Native Hikvision Device Network SDK. When the worker is installed this is
-  // the preferred transport; RTSP/ISAPI code stays only as an emergency
-  // compatibility fallback for nodes where the vendor SDK is absent.
   nativeSdkWorker: process.env.HIK_SDK_WORKER || '/opt/hikvision/hcnetsdk/bin/hik-sdk-worker',
   nativeSdkDefaultPort: numberEnv('HIK_SDK_DEFAULT_PORT', 8000, 1),
   nativeSdkCommandTimeoutMs: numberEnv('HIK_SDK_COMMAND_TIMEOUT_MS', 20_000, 1000),
   nativeSdkPreferred: boolEnv('HIK_NATIVE_SDK_PREFERRED', true),
+  nativeSdkRequired: boolEnv('HIK_NATIVE_SDK_REQUIRED', false),
+  // Operational SDK failures do not silently fall back to RTSP/ISAPI unless
+  // the operator explicitly opts in. This keeps a native-enabled node native.
   nativeSdkFallback: boolEnv('HIK_NATIVE_SDK_FALLBACK', false),
 
   requestTimeoutMs: numberEnv('HIK_ISAPI_TIMEOUT_MS', 10_000, 1000),
