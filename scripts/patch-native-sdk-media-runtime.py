@@ -34,7 +34,7 @@ def patch_media(path: Path) -> None:
     )
 
     old_ranges = """      const items = await searchDeviceArchive(found.device.config, found.channel, start, end);\n      return res.json({ source: 'device', ranges: items.map(({ start: itemStart, end: itemEnd, source }) => ({ start: itemStart, end: itemEnd, source })) });"""
-    new_ranges = """      if (nativeSdkActive()) {\n        return res.json({ source: 'device', transport: 'hcnet-private-sdk', ranges: nativeArchiveRanges(found.device.config, found.channel, start, end) });\n      }\n      const items = await searchDeviceArchive(found.device.config, found.channel, start, end);\n      return res.json({ source: 'device', ranges: items.map(({ start: itemStart, end: itemEnd, source }) => ({ start: itemStart, end: itemEnd, source })) });"""
+    new_ranges = """      if (nativeSdkActive()) {\n        return res.json({ source: 'device', transport: 'hcnet-private-sdk', ranges: await nativeArchiveRanges(found.device.config, found.channel, start, end) });\n      }\n      const items = await searchDeviceArchive(found.device.config, found.channel, start, end);\n      return res.json({ source: 'device', ranges: items.map(({ start: itemStart, end: itemEnd, source }) => ({ start: itemStart, end: itemEnd, source })) });"""
     text = replace_once(text, old_ranges, new_ranges, "native archive ranges")
 
     old_export = """      } else {\n        await streamDeviceArchiveMp4(found.device.config, found.channel, start, end, res);\n      }"""
@@ -70,6 +70,12 @@ def patch_service(path: Path) -> None:
     old = """  async initialize(): Promise<void> {\n    this.state = await this.store.load();\n    await this.reconcileRecorders();"""
     new = """  async initialize(): Promise<void> {\n    this.state = await this.store.load();\n    if (nativeSdkActive()) {\n      // Refresh HCNetSDK channel numbers (notably digital channels beginning at\n      // 33 on many NVRs) before starting any live recorder processes.\n      await this.syncAll();\n    } else {\n      await this.reconcileRecorders();\n    }"""
     text = replace_once(text, old, new, "native SDK initial discovery")
+    text = replace_once(
+        text,
+        "          result = discoverNativeHikvisionDevice(snapshot.config, snapshot.channels);",
+        "          result = await discoverNativeHikvisionDevice(snapshot.config, snapshot.channels);",
+        "await native SDK discovery",
+    )
     path.write_text(text, encoding="utf-8")
 
 
