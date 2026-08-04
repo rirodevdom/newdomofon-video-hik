@@ -3,6 +3,7 @@ import os from 'node:os';
 import { config, isMasterPairingConfigured } from '../config.js';
 import type { HikvisionNodeService } from '../service.js';
 import type { HikvisionDeviceConfig, HikvisionDeviceSnapshot } from '../types.js';
+import { nativeSdkActive } from '../nativeSdk/runtime.js';
 
 interface MasterConfigResponse {
   node_id: string;
@@ -46,11 +47,7 @@ async function masterRequest<T>(path: string, init: RequestInit = {}): Promise<T
     for (const [key, value] of Object.entries(headers())) {
       if (!requestHeaders.has(key)) requestHeaders.set(key, value);
     }
-    const response = await fetch(`${config.masterUrl}${path}`, {
-      ...init,
-      signal: controller.signal,
-      headers: requestHeaders
-    });
+    const response = await fetch(`${config.masterUrl}${path}`, { ...init, signal: controller.signal, headers: requestHeaders });
     const text = await response.text();
     if (!response.ok) {
       const error = new Error(`Master ${path} HTTP ${response.status}: ${text.slice(0, 300)}`) as Error & { statusCode?: number };
@@ -69,35 +66,31 @@ async function storageSnapshot(): Promise<Record<string, unknown>> {
     const blockSize = Number(stat.bsize || 0);
     const totalBytes = Number(stat.blocks || 0) * blockSize;
     const freeBytes = Number(stat.bavail || stat.bfree || 0) * blockSize;
-    return {
-      root: config.archiveRoot,
-      total_bytes: totalBytes,
-      free_bytes: freeBytes,
-      used_bytes: Math.max(0, totalBytes - freeBytes)
-    };
+    return { root: config.archiveRoot, total_bytes: totalBytes, free_bytes: freeBytes, used_bytes: Math.max(0, totalBytes - freeBytes) };
   } catch (error) {
-    return {
-      root: config.archiveRoot,
-      error: error instanceof Error ? error.message : String(error)
-    };
+    return { root: config.archiveRoot, error: error instanceof Error ? error.message : String(error) };
   }
 }
 
 async function heartbeat(service: HikvisionNodeService): Promise<void> {
+  const native = nativeSdkActive();
   await masterRequest('/api/node-agent/heartbeat', {
     method: 'POST',
     body: JSON.stringify({
       public_base_url: config.publicBaseUrl,
       internal_url: config.internalUrl,
-      version: '0.2.0',
+      version: '0.4.0',
       capabilities: {
         node_kind: 'hikvision',
         hostname: os.hostname(),
-        hikvision_isapi: true,
+        hikvision_hcnetsdk: native,
+        hikvision_isapi: !native,
+        transport: native ? 'hcnet-private-sdk' : 'legacy-compatibility',
         live_hls: true,
         snapshot: true,
         archive_node: true,
         archive_device: true,
+        events: true,
         contract_version: 1,
         devices: service.listDevices().length,
         channels: service.allChannels().length
@@ -112,10 +105,7 @@ async function loadConfig(): Promise<MasterConfigResponse> {
 }
 
 async function reportDiscovery(devices: HikvisionDeviceSnapshot[]): Promise<void> {
-  await masterRequest('/api/node-agent/hikvision/sync', {
-    method: 'POST',
-    body: JSON.stringify({ devices })
-  });
+  await masterRequest('/api/node-agent/hikvision/sync', { method: 'POST', body: JSON.stringify({ devices }) });
 }
 
 async function commandResult(command: NodeCommand, status: 'done' | 'failed', result: Record<string, unknown>): Promise<void> {
@@ -177,14 +167,9 @@ export function startMasterAgent(service: HikvisionNodeService): MasterAgentHand
   const runHeartbeat = async () => {
     if (stopped || heartbeatBusy) return;
     heartbeatBusy = true;
-    try {
-      await heartbeat(service);
-      lastError = '';
-    } catch (error) {
-      logFailure('heartbeat', error);
-    } finally {
-      heartbeatBusy = false;
-    }
+    try { await heartbeat(service); lastError = ''; }
+    catch (error) { logFailure('heartbeat', error); }
+    finally { heartbeatBusy = false; }
   };
 
   const runConfig = async () => {
@@ -192,12 +177,8 @@ export function startMasterAgent(service: HikvisionNodeService): MasterAgentHand
     configBusy = true;
     try {
       const remote = await loadConfig();
-      if ((remote.node_kind || 'video') !== 'hikvision') {
-        throw new Error(`Master node type is ${remote.node_kind || 'video'}, expected hikvision`);
-      }
-      if (remote.media_secret !== config.mediaSecret) {
-        throw new Error('DVR_NODE_MEDIA_SECRET does not match the master node record');
-      }
+      if ((remote.node_kind || 'video') !== 'hikvision') throw new Error(`Master node type is ${remote.node_kind || 'video'}, expected hikvision`);
+      if (remote.media_secret !== config.mediaSecret) throw new Error('DVR_NODE_MEDIA_SECRET does not match the master node record');
       await service.reconcileMasterDevices(remote.devices || []);
       await reportDiscovery(service.listDevices(true));
       await processCommands(service);
