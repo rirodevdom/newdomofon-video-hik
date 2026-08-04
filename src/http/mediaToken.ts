@@ -3,7 +3,7 @@ import type { Request } from 'express';
 import { config } from '../config.js';
 import { controlTokenFromRequest } from './controlAuth.js';
 
-export type MediaScope = 'live' | 'archive' | 'snapshot';
+export type MediaScope = 'live' | 'archive' | 'snapshot' | 'events';
 
 export interface MediaTokenPayload {
   channel_id: string;
