@@ -4,7 +4,8 @@ umask 077
 
 SOURCE="${1:-}"
 SDK_ROOT="${HIK_SDK_ROOT:-/opt/hikvision/hcnetsdk}"
-PROJECT_DIR="${PROJECT_DIR:-/opt/newdomofon-video-hik}"
+SOURCE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+PROJECT_DIR="${PROJECT_DIR:-$SOURCE_DIR}"
 WORK_DIR=""
 
 fail() { echo "ERROR: $*" >&2; exit 1; }
@@ -17,6 +18,7 @@ trap cleanup EXIT
 [[ -e "$SOURCE" ]] || fail "SDK package/path not found: $SOURCE"
 command -v g++ >/dev/null 2>&1 || fail "g++ is required (install build-essential first)"
 command -v find >/dev/null 2>&1 || fail "find is required"
+command -v rsync >/dev/null 2>&1 || fail "rsync is required"
 
 WORK_DIR="$(mktemp -d /tmp/newdomofon-hcnet-sdk.XXXXXX)"
 INPUT_ROOT="$SOURCE"
@@ -44,7 +46,7 @@ if [[ -f "$SOURCE" ]]; then
 fi
 
 HEADER="$(find "$INPUT_ROOT" -type f -name HCNetSDK.h -print -quit)"
-LIB="$(find "$INPUT_ROOT" -type f \( -name libhcnetsdk.so -o -name libhcnetsdk.so.* \) -print -quit)"
+LIB="$(find "$INPUT_ROOT" -type f \( -name libhcnetsdk.so -o -name 'libhcnetsdk.so.*' \) -print -quit)"
 [[ -n "$HEADER" ]] || fail "HCNetSDK.h was not found in the supplied package"
 [[ -n "$LIB" ]] || fail "libhcnetsdk.so was not found in the supplied package"
 
@@ -57,7 +59,7 @@ rsync -a --delete "$HEADER_DIR/" "$SDK_ROOT/include/"
 rsync -a --delete "$RUNTIME_SOURCE/" "$SDK_ROOT/runtime/"
 
 [[ -f "$SDK_ROOT/include/HCNetSDK.h" ]] || fail "Normalized HCNetSDK header is missing"
-RUNTIME_LIB="$(find "$SDK_ROOT/runtime" -maxdepth 2 -type f \( -name libhcnetsdk.so -o -name libhcnetsdk.so.* \) -print -quit)"
+RUNTIME_LIB="$(find "$SDK_ROOT/runtime" -maxdepth 2 -type f \( -name libhcnetsdk.so -o -name 'libhcnetsdk.so.*' \) -print -quit)"
 [[ -n "$RUNTIME_LIB" ]] || fail "Normalized libhcnetsdk.so is missing"
 RUNTIME_LIB_DIR="$(dirname "$RUNTIME_LIB")"
 
