@@ -2,7 +2,7 @@ name: Hikvision node CI
 
 on:
   push:
-    branches: [main, 'agent/**']
+    branches: [main, 'agent/**', 'feature/native-hcnet-sdk']
   pull_request:
 
 jobs:
@@ -31,6 +31,16 @@ jobs:
           grep -q 'agentDerivedMediaSecret' src/http/mediaToken.ts
           test -s test/http/mediaToken.test.ts
           test -s docs/MANUAL_MASTER_PAIRING.md
+      - name: Validate native HCNetSDK transport source
+        run: |
+          bash -n scripts/install-hcnet-sdk-local.sh
+          bash -n scripts/test-hcnet-sdk-device.sh
+          python3 -m py_compile scripts/validate-native-sdk-source.py
+          python3 scripts/validate-native-sdk-source.py
+          test -s native-sdk/hik_sdk_worker.cpp
+          grep -q 'login.byLoginMode = 0' native-sdk/hik_sdk_worker.cpp
+          grep -q 'NET_DVR_PLAYSETTIME' native-sdk/hik_sdk_worker.cpp
+          grep -q 'NET_DVR_SetupAlarmChan_V41' native-sdk/hik_sdk_worker.cpp
       - name: Validate fast media source patch
         run: |
           python3 -m py_compile scripts/patch-fast-media-startup.py
