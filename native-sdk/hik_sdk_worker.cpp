@@ -1,8 +1,10 @@
 #include <HCNetSDK.h>
 
 #include <atomic>
+#include <cerrno>
 #include <chrono>
 #include <csignal>
+#include <cstdlib>
 #include <cstring>
 #include <ctime>
 #include <iomanip>
@@ -234,7 +236,7 @@ void mode_live(SdkSession& sdk) {
   NET_DVR_PREVIEWINFO preview{};
   preview.lChannel = env_int("HIK_SDK_CHANNEL", 1);
   preview.dwStreamType = logical_stream_type();
-  preview.dwLinkMode = 0; // SDK private TCP stream where device supports it; no RTSP URL is used.
+  preview.dwLinkMode = 0; // private TCP path selected by HCNetSDK; no RTSP URL is supplied.
   preview.hPlayWnd = 0;
   preview.bBlocked = TRUE;
 
