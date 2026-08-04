@@ -49,7 +49,7 @@ async function main(): Promise<void> {
     res.json({
       ok: true,
       service: 'newdomofon-video-hik',
-      version: '0.4.0',
+      version: '0.3.0',
       devices: service.listDevices().length,
       channels: service.allChannels().length,
       recorders: service.recorderManager.allStatuses().filter((item) => item.running).length,
