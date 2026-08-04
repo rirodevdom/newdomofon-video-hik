@@ -1,4 +1,4 @@
-import { spawn, spawnSync, type ChildProcessWithoutNullStreams } from 'node:child_process';
+import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import fs from 'node:fs';
 import type { HikvisionChannel, HikvisionDeviceConfig } from '../types.js';
 import { config } from '../config.js';
@@ -48,30 +48,38 @@ export function sdkChannel(channel: HikvisionChannel): number {
   return direct;
 }
 
-export function runNativeJson<T>(device: HikvisionDeviceConfig, mode: 'probe' | 'ranges', extra: Record<string, string> = {}): T {
+export async function runNativeJson<T>(device: HikvisionDeviceConfig, mode: 'probe' | 'ranges', extra: Record<string, string> = {}): Promise<T> {
   if (!nativeSdkAvailable()) throw new Error(`HCNetSDK worker is not installed: ${config.nativeSdkWorker}`);
-  const result = spawnSync(config.nativeSdkWorker, [mode], {
+  const child = spawn(config.nativeSdkWorker, [mode], {
     env: { ...deviceEnv(device), ...extra },
-    encoding: 'utf8',
-    timeout: config.nativeSdkCommandTimeoutMs,
-    maxBuffer: 16 * 1024 * 1024
+    stdio: ['ignore', 'pipe', 'pipe']
   });
-  if (result.error) throw result.error;
-  if (result.status !== 0) {
-    throw new Error(`HCNetSDK ${mode} failed (${result.status}): ${(result.stderr || '').trim().slice(-2000)}`);
-  }
-  const lines = String(result.stdout || '').split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  let stdout = '';
+  let stderr = '';
+  child.stdout.on('data', (chunk) => { stdout = `${stdout}${String(chunk)}`.slice(-16 * 1024 * 1024); });
+  child.stderr.on('data', (chunk) => { stderr = `${stderr}${String(chunk)}`.slice(-2 * 1024 * 1024); });
+  const code = await new Promise<number | null>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      child.kill('SIGTERM');
+      reject(new Error(`HCNetSDK ${mode} exceeded ${config.nativeSdkCommandTimeoutMs} ms`));
+    }, config.nativeSdkCommandTimeoutMs);
+    timer.unref?.();
+    child.once('error', (error) => { clearTimeout(timer); reject(error); });
+    child.once('exit', (exitCode) => { clearTimeout(timer); resolve(exitCode); });
+  });
+  if (code !== 0) throw new Error(`HCNetSDK ${mode} failed (${code}): ${stderr.trim().slice(-2000)}`);
+  const lines = stdout.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
   const jsonLine = [...lines].reverse().find((line) => line.startsWith('{'));
   if (!jsonLine) throw new Error(`HCNetSDK ${mode} returned no JSON payload`);
   return JSON.parse(jsonLine) as T;
 }
 
-export function probeNativeDevice(device: HikvisionDeviceConfig): NativeProbe {
+export function probeNativeDevice(device: HikvisionDeviceConfig): Promise<NativeProbe> {
   return runNativeJson<NativeProbe>(device, 'probe');
 }
 
-export function findNativeArchive(device: HikvisionDeviceConfig, channel: HikvisionChannel, start: Date, end: Date): NativeArchiveItem[] {
-  const payload = runNativeJson<{ items?: NativeArchiveItem[] }>(device, 'ranges', {
+export async function findNativeArchive(device: HikvisionDeviceConfig, channel: HikvisionChannel, start: Date, end: Date): Promise<NativeArchiveItem[]> {
+  const payload = await runNativeJson<{ items?: NativeArchiveItem[] }>(device, 'ranges', {
     HIK_SDK_CHANNEL: String(sdkChannel(channel)),
     HIK_SDK_START: start.toISOString(),
     HIK_SDK_END: end.toISOString(),
