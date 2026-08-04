@@ -56,6 +56,16 @@ export const config = {
   tempRoot: process.env.HIK_NODE_TEMP_ROOT || path.join(root, 'tmp'),
   ffmpegPath: process.env.FFMPEG_PATH || '/usr/bin/ffmpeg',
   ffprobePath: process.env.FFPROBE_PATH || '/usr/bin/ffprobe',
+
+  // Native Hikvision Device Network SDK. When the worker is installed this is
+  // the preferred transport; RTSP/ISAPI code stays only as an emergency
+  // compatibility fallback for nodes where the vendor SDK is absent.
+  nativeSdkWorker: process.env.HIK_SDK_WORKER || '/opt/hikvision/hcnetsdk/bin/hik-sdk-worker',
+  nativeSdkDefaultPort: numberEnv('HIK_SDK_DEFAULT_PORT', 8000, 1),
+  nativeSdkCommandTimeoutMs: numberEnv('HIK_SDK_COMMAND_TIMEOUT_MS', 20_000, 1000),
+  nativeSdkPreferred: boolEnv('HIK_NATIVE_SDK_PREFERRED', true),
+  nativeSdkFallback: boolEnv('HIK_NATIVE_SDK_FALLBACK', false),
+
   requestTimeoutMs: numberEnv('HIK_ISAPI_TIMEOUT_MS', 10_000, 1000),
   syncIntervalSeconds: numberEnv('HIK_CHANNEL_SYNC_SECONDS', 300, 10),
   streamSettingsConcurrency: numberEnv('HIK_STREAM_SETTINGS_CONCURRENCY', 4, 1),
