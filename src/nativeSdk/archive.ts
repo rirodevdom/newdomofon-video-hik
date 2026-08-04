@@ -4,13 +4,14 @@ import { config } from '../config.js';
 import type { ArchiveRange, HikvisionChannel, HikvisionDeviceConfig } from '../types.js';
 import { findNativeArchive, spawnNativeStream } from './client.js';
 
-export function nativeArchiveRanges(
+export async function nativeArchiveRanges(
   device: HikvisionDeviceConfig,
   channel: HikvisionChannel,
   start: Date,
   end: Date
-): ArchiveRange[] {
-  return findNativeArchive(device, channel, start, end).map((item) => ({
+): Promise<ArchiveRange[]> {
+  const items = await findNativeArchive(device, channel, start, end);
+  return items.map((item) => ({
     start: item.start,
     end: item.end,
     source: 'device' as const
