@@ -39,9 +39,7 @@ function buildChannel(
     syntheticStream(physical, 'main', oldStreams.find((item) => item.stream_type === 'main')),
     syntheticStream(physical, 'sub', oldStreams.find((item) => item.stream_type === 'sub'))
   ];
-  const primary = override.primary_stream_id
-    || previous?.primary_stream_id
-    || streams[0]!.id;
+  const primary = override.primary_stream_id || previous?.primary_stream_id || streams[0]!.id;
   return {
     id,
     device_id: device.id,
@@ -65,11 +63,11 @@ export interface NativeDiscoveryResult {
   channels: HikvisionChannel[];
 }
 
-export function discoverNativeHikvisionDevice(
+export async function discoverNativeHikvisionDevice(
   device: HikvisionDeviceConfig,
   previousChannels: HikvisionChannel[] = []
-): NativeDiscoveryResult {
-  const probe = probeNativeDevice(device);
+): Promise<NativeDiscoveryResult> {
+  const probe = await probeNativeDevice(device);
   const previous = new Map(previousChannels.map((channel) => [channel.physical_channel, channel]));
   const channels: HikvisionChannel[] = [];
 
@@ -83,8 +81,6 @@ export function discoverNativeHikvisionDevice(
   const digitalStart = Math.max(1, Number(probe.digital_start || 1));
   const digitalCount = Math.max(0, Number(probe.digital_count || 0));
   for (let index = 0; index < digitalCount; index += 1) {
-    // HCNetSDK uses lChannel=33+ for many NVR digital channels, while the UI
-    // should continue to expose the human channel sequence after analog inputs.
     const physical = analogCount + index + 1;
     channels.push(buildChannel(device, physical, digitalStart + index, previous.get(physical)));
   }
