@@ -48,13 +48,19 @@ def patch_media(path: Path) -> None:
 def patch_index(path: Path) -> None:
     text = path.read_text(encoding="utf-8")
     import_anchor = "import { DeviceArchiveSessionManager } from './archive/deviceArchiveSessions.js';\n"
-    imports = import_anchor + "import { NativeSdkArchiveSessionManager } from './nativeSdk/archiveSessions.js';\nimport { nativeSdkActive } from './nativeSdk/runtime.js';\n"
+    imports = import_anchor + "import { NativeSdkArchiveSessionManager } from './nativeSdk/archiveSessions.js';\nimport { nativeSdkActive } from './nativeSdk/runtime.js';\nimport { NativeSdkEventCollector } from './nativeSdk/eventCollector.js';\n"
     text = replace_once(text, import_anchor, imports, "native SDK session imports")
     text = replace_once(
         text,
         "  const sessions = new DeviceArchiveSessionManager();",
         "  const sessions = nativeSdkActive() ? new NativeSdkArchiveSessionManager() : new DeviceArchiveSessionManager();",
         "native SDK archive session selection",
+    )
+    text = replace_once(
+        text,
+        "  const eventCollector = new HikvisionEventCollector(service);",
+        "  const eventCollector = nativeSdkActive() ? new NativeSdkEventCollector(service) : new HikvisionEventCollector(service);",
+        "native SDK event collector selection",
     )
     path.write_text(text, encoding="utf-8")
 
