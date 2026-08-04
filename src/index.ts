@@ -5,8 +5,15 @@ import { EncryptedStateStore } from './state/encryptedStore.js';
 import { HikvisionNodeService } from './service.js';
 import { createControlRouter } from './http/controlRoutes.js';
 import { createMediaRouter } from './http/mediaRoutes.js';
+import { createEventRouter } from './http/eventRoutes.js';
 import { DeviceArchiveSessionManager } from './archive/deviceArchiveSessions.js';
 import { startMasterAgent } from './master/nodeClient.js';
+import { HikvisionEventCollector } from './events/hikvisionEventCollector.js';
+import {
+  closeHikvisionEventStore,
+  getHikvisionEventStoreHealth,
+  initializeHikvisionEventStore
+} from './events/eventStore.js';
 
 async function main(): Promise<void> {
   await Promise.all([
@@ -16,11 +23,14 @@ async function main(): Promise<void> {
     fs.mkdir(config.tempRoot, { recursive: true, mode: 0o750 })
   ]);
 
+  initializeHikvisionEventStore();
   const store = new EncryptedStateStore(config.stateFile, config.stateKey);
   const service = new HikvisionNodeService(store);
   const sessions = new DeviceArchiveSessionManager();
   await service.initialize();
   sessions.startCleanup();
+  const eventCollector = new HikvisionEventCollector(service);
+  eventCollector.start();
   const masterAgent = startMasterAgent(service);
 
   const app = express();
@@ -49,8 +59,10 @@ async function main(): Promise<void> {
         archive_hls: true,
         archive_ranges: true,
         archive_export: true,
-        snapshot: true
+        snapshot: true,
+        events: true
       },
+      events: getHikvisionEventStoreHealth(),
       isapi: true,
       master_pairing: masterAgent.enabled,
       node_kind: 'hikvision'
@@ -59,11 +71,17 @@ async function main(): Promise<void> {
 
   app.use('/api/v1/control', createControlRouter(service));
   app.use('/api/v1/media', createMediaRouter(service, sessions));
+  app.use('/api/v1/events', createEventRouter(service));
 
   app.use((error: unknown, _req: Request, res: Response, _next: NextFunction) => {
     const message = error instanceof Error ? error.message : String(error);
-    console.error(message);
-    res.status(500).json({ error: message });
+    const rawStatus = error && typeof error === 'object' && 'statusCode' in error
+      ? Number((error as { statusCode?: unknown }).statusCode)
+      : 500;
+    const status = Number.isInteger(rawStatus) && rawStatus >= 400 && rawStatus <= 599 ? rawStatus : 500;
+    if (status >= 500) console.error(message);
+    else console.warn(message);
+    res.status(status).json({ error: message });
   });
 
   const server = app.listen(config.port, config.host, () => {
@@ -73,8 +91,10 @@ async function main(): Promise<void> {
   const shutdown = (signal: string) => {
     console.log(`Received ${signal}; shutting down`);
     masterAgent.stop();
+    eventCollector.stop();
     sessions.stop();
     service.shutdown();
+    closeHikvisionEventStore();
     server.close(() => process.exit(0));
     setTimeout(() => process.exit(1), 10_000).unref();
   };
