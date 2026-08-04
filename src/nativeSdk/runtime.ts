@@ -20,9 +20,9 @@ export function createRecorderManager(): RecorderManagerLike {
     console.log(`[hikvision-transport] native HCNetSDK enabled: ${config.nativeSdkWorker}`);
     return new NativeSdkRecorderManager();
   }
-  if (config.nativeSdkPreferred && !config.nativeSdkFallback) {
+  if (config.nativeSdkRequired) {
     throw new Error(`Native HCNetSDK is required but worker is unavailable: ${config.nativeSdkWorker}`);
   }
-  console.warn('[hikvision-transport] HCNetSDK unavailable; using legacy compatibility transport');
+  console.warn('[hikvision-transport] HCNetSDK worker is absent; legacy compatibility transport remains available on this node');
   return new RecorderManager();
 }
