@@ -1,0 +1,32 @@
+name: Archive concurrency CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Apply concurrency patch and verify idempotence
+        run: |
+          python3 -m py_compile scripts/patch-native-archive-concurrency.py
+          python3 scripts/patch-native-archive-concurrency.py --project-dir .
+          before="$(sha256sum src/config.ts src/nativeSdk/client.ts src/nativeSdk/deviceRuntime.ts src/nativeSdk/archiveSessions.ts native-sdk/hik_sdk_device_worker.cpp | sha256sum | awk '{print $1}')"
+          python3 scripts/patch-native-archive-concurrency.py --project-dir .
+          after="$(sha256sum src/config.ts src/nativeSdk/client.ts src/nativeSdk/deviceRuntime.ts src/nativeSdk/archiveSessions.ts native-sdk/hik_sdk_device_worker.cpp | sha256sum | awk '{print $1}')"
+          test "$before" = "$after"
+          grep -q "HIK_DEVICE_ARCHIVE_MAX_ACTIVE_PER_DVR', 4" src/config.ts
+          grep -q 'HIK_SDK_MAX_PLAYBACKS' src/nativeSdk/client.ts
+          grep -q 'ensureDeviceCapacity' src/nativeSdk/archiveSessions.ts
+          grep -q 'ARCHIVE_SLOT_IDLE_MS = 30_000' src/nativeSdk/archiveSessions.ts
+          grep -q 'has_playback_for_channel' native-sdk/hik_sdk_device_worker.cpp
+          grep -q 'stage=capacity' native-sdk/hik_sdk_device_worker.cpp
+          grep -q 'HIK_DEVICE_ARCHIVE_MAX_ACTIVE_PER_DVR 4' scripts/update-installed-project.sh
+      - name: Syntax-check patched grouped worker
+        run: g++ -std=c++17 -Wall -Wextra -fsyntax-only -I test/native-sdk native-sdk/hik_sdk_device_worker.cpp
