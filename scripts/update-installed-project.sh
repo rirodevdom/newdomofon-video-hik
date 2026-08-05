@@ -97,6 +97,7 @@ if [[ -f /opt/hikvision/hcnetsdk/include/HCNetSDK.h ]]; then
   set_env_default HIK_NATIVE_SDK_FALLBACK false
   set_env_default HIK_SDK_WORKER /opt/hikvision/hcnetsdk/bin/hik-sdk-worker
   set_env_default HIK_SDK_CHANNEL_PROBE /opt/hikvision/hcnetsdk/bin/hik-sdk-channel-probe
+  set_env_default HIK_SDK_DEVICE_WORKER /opt/hikvision/hcnetsdk/bin/hik-sdk-device-worker
   chmod 0600 "$ENV_FILE"
 else
   log "HCNetSDK is not installed; native worker rebuild skipped"
@@ -124,7 +125,7 @@ for _ in $(seq 1 90); do
   if [[ -n "$LAST_HEALTH" ]] && health_ready <<<"$LAST_HEALTH"; then
     printf '%s\n' "$LAST_HEALTH"
     SERVICE_STOPPED=0
-    log "Update completed; native sync and configured live readiness recovered; backup: $BACKUP_DIR"
+    log "Update completed; grouped HCNetSDK runtime, native sync and live readiness recovered; backup: $BACKUP_DIR"
     exit 0
   fi
   sleep 1
@@ -132,4 +133,4 @@ done
 
 printf 'Last health response: %s\n' "${LAST_HEALTH:-<none>}" >&2
 journalctl -u "$SERVICE_NAME" -n 200 --no-pager
-fail "Updated service started but native sync/live readiness did not recover"
+fail "Updated service started but grouped HCNetSDK runtime/sync/live readiness did not recover"
