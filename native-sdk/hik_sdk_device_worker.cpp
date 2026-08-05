@@ -234,6 +234,8 @@ void ensure_fifo(LiveSink& sink) {
   }
 }
 
+} // namespace
+
 int main() {
   std::signal(SIGINT, on_signal);
   std::signal(SIGTERM, on_signal);
