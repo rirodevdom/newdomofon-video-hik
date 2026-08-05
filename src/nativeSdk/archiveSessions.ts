@@ -27,6 +27,7 @@ export interface NativeArchiveSession {
 
 interface RuntimeSession extends NativeArchiveSession {
   ffmpeg: ChildProcess | null;
+  ffmpegErrors: string;
   fifoPath: string;
   playbackStarted: boolean;
   retiredAt: number | null;
@@ -96,9 +97,6 @@ export class NativeSdkArchiveSessionManager {
       return existing;
     }
 
-    // Commands are delivered to the same persistent HCNetSDK process that owns
-    // live and alarms for this DVR. STOP then PLAYBACK are ordered on one stdin,
-    // so a seek never creates overlapping NET_DVR_Init/login processes.
     await this.retireChannel(channel.id, id);
 
     const dir = path.join(config.tempRoot, 'native-device-archive', safeId(channel.id), id);
@@ -109,6 +107,7 @@ export class NativeSdkArchiveSessionManager {
       playlist: path.join(dir, 'index.m3u8'),
       status: 'preparing', error: null, createdAt: Date.now(), lastAccessAt: Date.now(),
       ffmpeg: null,
+      ffmpegErrors: '',
       fifoPath: path.join(dir, 'playback.ps.fifo'),
       playbackStarted: false,
       retiredAt: null
@@ -156,8 +155,9 @@ export class NativeSdkArchiveSessionManager {
     ], { cwd: session.dir, stdio: ['ignore', 'ignore', 'pipe'], env: { ...process.env, TZ: 'UTC' } });
     session.ffmpeg = ffmpeg;
 
-    let errors = '';
-    ffmpeg.stderr?.on('data', (chunk) => { errors = `${errors}\n${String(chunk)}`.slice(-5000); });
+    ffmpeg.stderr?.on('data', (chunk) => {
+      session.ffmpegErrors = `${session.ffmpegErrors}\n${String(chunk)}`.slice(-5000);
+    });
     ffmpeg.once('error', (error) => {
       if (session.status === 'preparing') {
         session.status = 'error';
@@ -168,7 +168,7 @@ export class NativeSdkArchiveSessionManager {
       if (session.status === 'retired' || session.status === 'cancelled') return;
       if (session.status === 'preparing') {
         session.status = 'error';
-        session.error = errors.trim() || `archive ffmpeg exited code=${code} signal=${signal}`;
+        session.error = session.ffmpegErrors.trim() || `archive ffmpeg exited code=${code} signal=${signal}`;
       }
     });
 
@@ -186,14 +186,21 @@ export class NativeSdkArchiveSessionManager {
   private async waitReady(session: RuntimeSession): Promise<void> {
     const deadline = Date.now() + READY_TIMEOUT_MS;
     while (Date.now() < deadline) {
-      if (session.status === 'error') throw Object.assign(new Error(session.error || 'HCNetSDK archive session failed'), { statusCode: 502 });
+      if (session.status === 'error') {
+        throw Object.assign(new Error(session.error || 'HCNetSDK archive session failed'), { statusCode: 502 });
+      }
       if (await playable(session)) {
         session.status = 'ready';
         return;
       }
       await new Promise((resolve) => setTimeout(resolve, 100));
     }
-    throw Object.assign(new Error('HCNetSDK grouped playback did not produce a playable HLS segment in time'), { statusCode: 503 });
+    const ffmpegTail = session.ffmpegErrors.trim().slice(-1800);
+    const detail = ffmpegTail
+      ? `HCNetSDK grouped playback did not produce a playable HLS segment in time; ffmpeg=${ffmpegTail}`
+      : 'HCNetSDK grouped playback did not produce a playable HLS segment in time; ffmpeg produced no diagnostic output';
+    console.warn(`[native-archive:${session.channelId}] session=${session.id} readiness timeout: ${detail}`);
+    throw Object.assign(new Error(detail), { statusCode: 503 });
   }
 
   private async stopRuntime(session: RuntimeSession): Promise<void> {
