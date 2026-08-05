@@ -145,6 +145,7 @@ struct PlaybackSink {
   std::string fifoPath;
   StreamOutput output;
   LONG handle{-1};
+  LiveSink* pausedLive{nullptr};
 };
 
 bool write_all_fd(int fd, const BYTE* data, DWORD size) {
@@ -227,7 +228,8 @@ std::vector<std::unique_ptr<LiveSink>> load_live_config(const std::string& path)
     if (line.empty() || line[0] == '#') continue;
     std::istringstream row(line);
     std::string physicalRaw, sdkRaw, streamRaw, fifo;
-    if (!std::getline(row, physicalRaw, '\t') || !std::getline(row, sdkRaw, '\t') || !std::getline(row, streamRaw, '\t') || !std::getline(row, fifo)) {
+    if (!std::getline(row, physicalRaw, '\t') || !std::getline(row, sdkRaw, '\t') ||
+        !std::getline(row, streamRaw, '\t') || !std::getline(row, fifo)) {
       std::cerr << "invalid live config row: " << line << "\n";
       std::exit(64);
     }
@@ -267,65 +269,156 @@ bool ensure_fifo(const std::string& fifoPath, StreamOutput& output, const std::s
   return true;
 }
 
-void stop_playback(std::map<std::string, std::unique_ptr<PlaybackSink>>& playbacks, const std::string& sessionId) {
+bool start_live(SdkDevice& sdk, LiveSink& sink) {
+  if (sink.handle >= 0) return true;
+  if (sink.output.fd < 0 && !ensure_fifo(sink.fifoPath, sink.output, sink.output.label)) return false;
+  NET_DVR_PREVIEWINFO preview{};
+  preview.lChannel = sink.sdkChannel;
+  preview.dwStreamType = sink.streamType;
+  preview.dwLinkMode = 0;
+  preview.hPlayWnd = 0;
+  preview.bBlocked = TRUE;
+  sink.handle = NET_DVR_RealPlay_V40(sdk.user_id(), &preview, grouped_stream_callback, &sink.output);
+  if (sink.handle < 0) {
+    std::cerr << "NET_DVR_RealPlay_V40 failed physical=" << sink.physicalChannel
+              << " sdk=" << sink.sdkChannel << " HCNetSDK error=" << NET_DVR_GetLastError() << "\n";
+    return false;
+  }
+  std::cerr << "HCNetSDK grouped live started physical=" << sink.physicalChannel
+            << " sdk=" << sink.sdkChannel << " stream=" << sink.streamType << "\n";
+  return true;
+}
+
+void stop_live(LiveSink& sink, const char* reason) {
+  if (sink.handle < 0) return;
+  NET_DVR_StopRealPlay(sink.handle);
+  sink.handle = -1;
+  std::cerr << "HCNetSDK grouped live paused physical=" << sink.physicalChannel
+            << " sdk=" << sink.sdkChannel << " reason=" << reason << "\n";
+}
+
+LiveSink* find_live(std::vector<std::unique_ptr<LiveSink>>& sinks, int sdkChannel) {
+  for (auto& sink : sinks) {
+    if (sink->sdkChannel == sdkChannel) return sink.get();
+  }
+  return nullptr;
+}
+
+void emit_playback_status(const std::string& sessionId, const char* operation, bool ok,
+                          const std::string& stage = "", DWORD error = 0) {
+  std::cerr << "PLAYBACK_STATUS\t" << sessionId << '\t' << operation << '\t'
+            << (ok ? "OK" : "ERR") << '\t' << stage << '\t' << error << std::endl;
+}
+
+void resume_live(SdkDevice& sdk, LiveSink* sink) {
+  if (!sink || sink->handle >= 0 || g_stop.load()) return;
+  if (!start_live(sdk, *sink)) {
+    std::cerr << "HCNetSDK grouped live resume failed physical=" << sink->physicalChannel
+              << " sdk=" << sink->sdkChannel << "\n";
+  } else {
+    std::cerr << "HCNetSDK grouped live resumed physical=" << sink->physicalChannel
+              << " sdk=" << sink->sdkChannel << "\n";
+  }
+}
+
+void stop_playback(SdkDevice& sdk,
+                   std::map<std::string, std::unique_ptr<PlaybackSink>>& playbacks,
+                   const std::string& sessionId,
+                   bool resumeLive = true,
+                   bool emitStatus = true) {
   auto it = playbacks.find(sessionId);
-  if (it == playbacks.end()) return;
+  if (it == playbacks.end()) {
+    if (emitStatus) emit_playback_status(sessionId, "stop", true, "not_found", 0);
+    return;
+  }
   auto& sink = *it->second;
   if (sink.handle >= 0) NET_DVR_StopPlayBack(sink.handle);
   if (sink.output.fd >= 0) ::close(sink.output.fd);
+  LiveSink* pausedLive = sink.pausedLive;
   std::cerr << "HCNetSDK grouped playback stopped session=" << sessionId << "\n";
   playbacks.erase(it);
+  if (resumeLive) resume_live(sdk, pausedLive);
+  if (emitStatus) emit_playback_status(sessionId, "stop", true);
 }
 
-bool start_playback(
-  SdkDevice& sdk,
-  std::map<std::string, std::unique_ptr<PlaybackSink>>& playbacks,
-  const std::string& sessionId,
-  int sdkChannel,
-  const std::string& startRaw,
-  const std::string& endRaw,
-  const std::string& fifoPath
-) {
-  stop_playback(playbacks, sessionId);
+bool start_playback(SdkDevice& sdk,
+                    std::map<std::string, std::unique_ptr<PlaybackSink>>& playbacks,
+                    std::vector<std::unique_ptr<LiveSink>>& liveSinks,
+                    const std::string& sessionId,
+                    int sdkChannel,
+                    const std::string& startRaw,
+                    const std::string& endRaw,
+                    const std::string& fifoPath) {
+  stop_playback(sdk, playbacks, sessionId, true, false);
+
   NET_DVR_TIME start{};
   NET_DVR_TIME end{};
   if (!parse_iso_utc(startRaw, start) || !parse_iso_utc(endRaw, end)) {
     std::cerr << "HCNetSDK grouped playback failed session=" << sessionId << " invalid_time\n";
+    emit_playback_status(sessionId, "start", false, "invalid_time", 0);
     return false;
   }
+
   auto sink = std::make_unique<PlaybackSink>();
   sink->sessionId = sessionId;
   sink->sdkChannel = sdkChannel;
   sink->fifoPath = fifoPath;
-  if (!ensure_fifo(fifoPath, sink->output, "playback session=" + sessionId + " sdk=" + std::to_string(sdkChannel))) return false;
+  sink->pausedLive = find_live(liveSinks, sdkChannel);
+
+  if (sink->pausedLive && sink->pausedLive->handle >= 0) {
+    stop_live(*sink->pausedLive, "archive_playback");
+  }
+
+  if (!ensure_fifo(fifoPath, sink->output,
+                   "playback session=" + sessionId + " sdk=" + std::to_string(sdkChannel))) {
+    resume_live(sdk, sink->pausedLive);
+    emit_playback_status(sessionId, "start", false, "fifo", static_cast<DWORD>(errno));
+    return false;
+  }
 
   sink->handle = NET_DVR_PlayBackByTime(sdk.user_id(), sdkChannel, &start, &end, 0);
   if (sink->handle < 0) {
+    const DWORD error = NET_DVR_GetLastError();
     std::cerr << "HCNetSDK grouped playback failed session=" << sessionId
-              << " stage=NET_DVR_PlayBackByTime error=" << NET_DVR_GetLastError() << "\n";
+              << " stage=NET_DVR_PlayBackByTime error=" << error << "\n";
     ::close(sink->output.fd);
+    sink->output.fd = -1;
+    resume_live(sdk, sink->pausedLive);
+    emit_playback_status(sessionId, "start", false, "NET_DVR_PlayBackByTime", error);
     return false;
   }
+
   if (!NET_DVR_SetPlayDataCallBack_V40(sink->handle, grouped_stream_callback, &sink->output)) {
     const DWORD error = NET_DVR_GetLastError();
     NET_DVR_StopPlayBack(sink->handle);
+    sink->handle = -1;
     ::close(sink->output.fd);
+    sink->output.fd = -1;
     std::cerr << "HCNetSDK grouped playback failed session=" << sessionId
               << " stage=NET_DVR_SetPlayDataCallBack_V40 error=" << error << "\n";
+    resume_live(sdk, sink->pausedLive);
+    emit_playback_status(sessionId, "start", false, "NET_DVR_SetPlayDataCallBack_V40", error);
     return false;
   }
+
   DWORD outLen = 0;
   if (!NET_DVR_PlayBackControl_V40(sink->handle, NET_DVR_PLAYSTART, nullptr, 0, nullptr, &outLen)) {
     const DWORD error = NET_DVR_GetLastError();
     NET_DVR_StopPlayBack(sink->handle);
+    sink->handle = -1;
     ::close(sink->output.fd);
+    sink->output.fd = -1;
     std::cerr << "HCNetSDK grouped playback failed session=" << sessionId
               << " stage=NET_DVR_PLAYSTART error=" << error << "\n";
+    resume_live(sdk, sink->pausedLive);
+    emit_playback_status(sessionId, "start", false, "NET_DVR_PLAYSTART", error);
     return false;
   }
+
   std::cerr << "HCNetSDK grouped playback started session=" << sessionId
             << " sdk=" << sdkChannel << " start=" << startRaw << " end=" << endRaw << "\n";
   playbacks.emplace(sessionId, std::move(sink));
+  emit_playback_status(sessionId, "start", true);
   return true;
 }
 
@@ -363,22 +456,7 @@ int main() {
 
   int started = 0;
   for (auto& sink : sinks) {
-    if (!ensure_fifo(sink->fifoPath, sink->output, sink->output.label)) continue;
-    NET_DVR_PREVIEWINFO preview{};
-    preview.lChannel = sink->sdkChannel;
-    preview.dwStreamType = sink->streamType;
-    preview.dwLinkMode = 0;
-    preview.hPlayWnd = 0;
-    preview.bBlocked = TRUE;
-    sink->handle = NET_DVR_RealPlay_V40(sdk.user_id(), &preview, grouped_stream_callback, &sink->output);
-    if (sink->handle < 0) {
-      std::cerr << "NET_DVR_RealPlay_V40 failed physical=" << sink->physicalChannel
-                << " sdk=" << sink->sdkChannel << " HCNetSDK error=" << NET_DVR_GetLastError() << "\n";
-      continue;
-    }
-    ++started;
-    std::cerr << "HCNetSDK grouped live started physical=" << sink->physicalChannel
-              << " sdk=" << sink->sdkChannel << " stream=" << sink->streamType << "\n";
+    if (start_live(sdk, *sink)) ++started;
   }
 
   if (started == 0 && !sinks.empty()) {
@@ -397,32 +475,38 @@ int main() {
       break;
     }
     if (ready == 0 || !(input.revents & POLLIN)) continue;
+
     std::string line;
     if (!std::getline(std::cin, line)) continue;
     const auto fields = split_tabs(line);
     if (fields.empty()) continue;
+
     if (fields[0] == "PLAYBACK" && fields.size() == 6) {
       int sdkChannel = 0;
       try { sdkChannel = std::stoi(fields[2]); } catch (...) { sdkChannel = 0; }
       if (sdkChannel <= 0) {
         std::cerr << "invalid grouped playback sdk channel session=" << fields[1] << "\n";
+        emit_playback_status(fields[1], "start", false, "invalid_channel", 0);
         continue;
       }
-      start_playback(sdk, playbacks, fields[1], sdkChannel, fields[3], fields[4], fields[5]);
+      start_playback(sdk, playbacks, sinks, fields[1], sdkChannel, fields[3], fields[4], fields[5]);
       continue;
     }
+
     if (fields[0] == "STOP_PLAYBACK" && fields.size() == 2) {
-      stop_playback(playbacks, fields[1]);
+      stop_playback(sdk, playbacks, fields[1], true, true);
       continue;
     }
+
     std::cerr << "unknown grouped command: " << line << "\n";
   }
 
   for (auto it = playbacks.begin(); it != playbacks.end();) {
     const std::string sessionId = it->first;
     ++it;
-    stop_playback(playbacks, sessionId);
+    stop_playback(sdk, playbacks, sessionId, false, false);
   }
+
   for (auto& sink : sinks) {
     if (sink->handle >= 0) NET_DVR_StopRealPlay(sink->handle);
     if (sink->output.fd >= 0) ::close(sink->output.fd);
