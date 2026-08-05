@@ -64,7 +64,7 @@ def patch_index(path: Path) -> None:
     text = replace_once(
         text,
         "      isapi: true,\n      master_pairing: masterAgent.enabled,",
-        "      hcnetsdk: nativeSdkActive(),\n      isapi: !nativeSdkActive(),\n      transport: nativeSdkActive() ? 'hcnet-private-sdk' : 'legacy-compatibility',\n      master_pairing: masterAgent.enabled,",
+        "      hcnetsdk: nativeSdkActive(),\n      isapi: !nativeSdkActive(),\n      transport: nativeSdkActive() ? 'hcnet-private-sdk' : 'legacy-compatibility',\n      sync_errors: service.listDevices(true).filter((item) => Boolean(item.last_sync_error)).length,\n      master_pairing: masterAgent.enabled,",
         "native SDK health transport",
     )
     path.write_text(text, encoding="utf-8")
