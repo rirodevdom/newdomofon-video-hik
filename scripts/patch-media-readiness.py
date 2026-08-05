@@ -5,6 +5,9 @@ import argparse
 from pathlib import Path
 
 
+READINESS_MARKER = "const CHANNEL_READY_TIMEOUT_MS = 20_000;"
+
+
 def replace_once(text: str, old: str, new: str, label: str) -> str:
     if new in text:
         return text
@@ -16,12 +19,14 @@ def replace_once(text: str, old: str, new: str, label: str) -> str:
 
 def patch_media_routes(path: Path) -> None:
     text = path.read_text(encoding="utf-8")
-    text = replace_once(
-        text,
-        "import { DeviceArchiveSessionManager } from '../archive/deviceArchiveSessions.js';\n",
-        "import { DeviceArchiveSessionManager } from '../archive/deviceArchiveSessions.js';\n\nconst CHANNEL_READY_TIMEOUT_MS = 20_000;\nconst LIVE_PLAYLIST_READY_TIMEOUT_MS = 20_000;\n\nfunction delay(ms: number): Promise<void> {\n  return new Promise((resolve) => setTimeout(resolve, ms));\n}\n",
-        "media readiness constants",
-    )
+    if READINESS_MARKER not in text:
+        text = replace_once(
+            text,
+            "import { DeviceArchiveSessionManager } from '../archive/deviceArchiveSessions.js';\n",
+            "import { DeviceArchiveSessionManager } from '../archive/deviceArchiveSessions.js';\n\nconst CHANNEL_READY_TIMEOUT_MS = 20_000;\nconst LIVE_PLAYLIST_READY_TIMEOUT_MS = 20_000;\n\nfunction delay(ms: number): Promise<void> {\n  return new Promise((resolve) => setTimeout(resolve, ms));\n}\n",
+            "media readiness constants",
+        )
+
     old_find = '''function find(req: Request, service: HikvisionNodeService) {
   const channelId = decodeURIComponent(String(req.params.channelId || ''));
   const found = service.findChannel(channelId);
@@ -64,26 +69,35 @@ async function waitForLivePlaylist(
 }'''
     text = replace_once(text, old_find, new_find, "wait for channel readiness")
     text = text.replace("const found = find(req, service);", "const found = await find(req, service);")
+
     old_live = "      const token = playlistMediaToken(req, found.channelId, 'live');\n      await servePlaylist(res, path.join(liveRoot(found.channelId, found.channel.archive_storage), 'live.m3u8'), token);"
     new_live = "      const token = playlistMediaToken(req, found.channelId, 'live');\n      const playlist = path.join(liveRoot(found.channelId, found.channel.archive_storage), 'live.m3u8');\n      await waitForLivePlaylist(service, found.channelId, playlist);\n      await servePlaylist(res, playlist, token);"
     text = replace_once(text, old_live, new_live, "wait for live playlist")
+
+    if text.count(READINESS_MARKER) != 1:
+        raise SystemExit(f"media readiness marker must occur once, found {text.count(READINESS_MARKER)}")
+    if text.count("function delay(ms: number)") != 1:
+        raise SystemExit("media readiness delay helper must occur once")
     path.write_text(text, encoding="utf-8")
 
 
 def patch_index(path: Path) -> None:
     text = path.read_text(encoding="utf-8")
-    text = replace_once(
-        text,
-        "import fs from 'node:fs/promises';\n",
-        "import fs from 'node:fs/promises';\nimport { statSync } from 'node:fs';\nimport path from 'node:path';\n",
-        "health filesystem imports",
-    )
-    text = replace_once(
-        text,
-        "import { startMasterAgent } from './master/nodeClient.js';\n",
-        "import { startMasterAgent } from './master/nodeClient.js';\nimport { archiveDir, liveDir } from './media/paths.js';\n",
-        "health media path imports",
-    )
+    if "import { statSync } from 'node:fs';" not in text:
+        text = replace_once(
+            text,
+            "import fs from 'node:fs/promises';\n",
+            "import fs from 'node:fs/promises';\nimport { statSync } from 'node:fs';\nimport path from 'node:path';\n",
+            "health filesystem imports",
+        )
+    if "import { archiveDir, liveDir } from './media/paths.js';" not in text:
+        text = replace_once(
+            text,
+            "import { startMasterAgent } from './master/nodeClient.js';\n",
+            "import { startMasterAgent } from './master/nodeClient.js';\nimport { archiveDir, liveDir } from './media/paths.js';\n",
+            "health media path imports",
+        )
+
     old_health = '''  app.get('/health', (_req, res) => {
     res.json({
       ok: true,

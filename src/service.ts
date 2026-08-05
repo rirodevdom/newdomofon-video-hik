@@ -1,6 +1,5 @@
 import { config } from './config.js';
 import { discoverHikvisionDevice, fetchStreamingChannelSettings } from './isapi/discovery.js';
-import { RecorderManager } from './media/recorderManager.js';
 import { EncryptedStateStore } from './state/encryptedStore.js';
 import type {
   HikvisionChannel,
@@ -10,19 +9,21 @@ import type {
   RecorderStatus
 } from './types.js';
 import { enforceLocalRetention } from './archive/localArchive.js';
+import { discoverNativeHikvisionDevice } from './nativeSdk/discovery.js';
+import { createRecorderManager, nativeSdkActive } from './nativeSdk/runtime.js';
 
 export function resolveChannelOnlineStatus(
-  isapiOnline: boolean | null,
+  deviceOnline: boolean | null,
   recorder: Pick<RecorderStatus, 'running' | 'restarts' | 'last_error'>
 ): boolean | null {
-  if (isapiOnline !== null) return isapiOnline;
+  if (deviceOnline !== null) return deviceOnline;
   if (recorder.running) return true;
   if (recorder.last_error || recorder.restarts > 0) return false;
   return null;
 }
 
 export class HikvisionNodeService {
-  readonly recorderManager = new RecorderManager();
+  readonly recorderManager = createRecorderManager();
   private state: PersistedState = { version: 1, devices: [] };
   private syncTimer: NodeJS.Timeout | null = null;
   private retentionTimer: NodeJS.Timeout | null = null;
@@ -127,7 +128,18 @@ export class HikvisionNodeService {
       return this.getDevice(id)!;
     }
     try {
-      const result = await discoverHikvisionDevice(snapshot.config);
+      let result;
+      if (nativeSdkActive()) {
+        try {
+          result = discoverNativeHikvisionDevice(snapshot.config, snapshot.channels);
+        } catch (error) {
+          if (!config.nativeSdkFallback) throw error;
+          console.warn(`[sync:${snapshot.config.id}] HCNetSDK discovery failed; legacy fallback enabled: ${error instanceof Error ? error.message : error}`);
+          result = await discoverHikvisionDevice(snapshot.config);
+        }
+      } else {
+        result = await discoverHikvisionDevice(snapshot.config);
+      }
       snapshot.device_info = result.device_info;
       snapshot.capabilities = result.capabilities;
       snapshot.channels = result.channels;
@@ -198,6 +210,11 @@ export class HikvisionNodeService {
   async refreshStreamSettings(channelId: string, streamId: string): Promise<HikvisionChannel> {
     const found = this.findChannel(channelId);
     if (!found) throw new Error('Hikvision channel not found');
+    if (nativeSdkActive()) {
+      // Private SDK live selection uses stream type directly. Existing stream
+      // metadata is intentionally preserved; refreshing it must not call ISAPI.
+      return this.channelView(found.channel);
+    }
     const settings = await fetchStreamingChannelSettings(found.device.config, streamId);
     const index = found.channel.streams.findIndex((stream) => stream.id === streamId);
     if (index >= 0) found.channel.streams[index] = settings;

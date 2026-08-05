@@ -39,6 +39,8 @@ export interface HikvisionChannel {
   id: string;
   device_id: string;
   physical_channel: number;
+  /** Actual HCNetSDK lChannel. Digital NVR channels commonly start at 33. */
+  sdk_channel?: number;
   name: string;
   online: boolean | null;
   enabled: boolean;

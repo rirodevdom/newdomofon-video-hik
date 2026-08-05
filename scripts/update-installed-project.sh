@@ -44,9 +44,6 @@ recorders = int(data.get("recorders") or 0)
 live_expected = int(data.get("live_expected") or 0)
 live_ready = int(data.get("live_ready") or 0)
 paired = bool(data.get("master_pairing"))
-# A paired node with a restored device must not be declared ready while its
-# channel state is empty. A recorder process is not enough: wait until every
-# expected channel has produced a fresh live.m3u8 from the current process.
 if paired and devices > 0 and channels <= 0:
     raise SystemExit(1)
 if channels > 0 and recorders <= 0:
@@ -64,6 +61,8 @@ install -d -m 0750 "$BACKUP_DIR"
 cp -a "$ENV_FILE" "$BACKUP_DIR/app.env"
 [[ -f /var/lib/newdomofon-video-hik/state.enc.json ]] \
   && cp -a /var/lib/newdomofon-video-hik/state.enc.json "$BACKUP_DIR/state.enc.json" || true
+[[ -x /opt/hikvision/hcnetsdk/bin/hik-sdk-worker.bin ]] \
+  && cp -a /opt/hikvision/hcnetsdk/bin/hik-sdk-worker.bin "$BACKUP_DIR/hik-sdk-worker.bin.before" || true
 
 log "Stopping service"
 systemctl stop "$SERVICE_NAME"
@@ -77,12 +76,16 @@ rsync -a --delete \
   "$SOURCE_DIR/" "$PROJECT_DIR/"
 
 cd "$PROJECT_DIR"
+if [[ -f /opt/hikvision/hcnetsdk/include/HCNetSDK.h ]]; then
+  log "Rebuilding installed native HCNetSDK worker"
+  PROJECT_DIR="$PROJECT_DIR" bash "$PROJECT_DIR/scripts/rebuild-hcnet-sdk-worker.sh"
+else
+  log "HCNetSDK is not installed; native worker rebuild skipped"
+fi
+
 gzip -dc package-lock.json.gz > package-lock.json
 npm ci --include=dev
 
-# The application config validates node credentials at module-import time.
-# Load the installed environment for checks while keeping tests independently
-# runnable with their own defaults.
 set -a
 . "$ENV_FILE"
 set +a

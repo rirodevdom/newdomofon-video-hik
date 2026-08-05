@@ -91,6 +91,16 @@ std::string iso_utc(const NET_DVR_TIME& value) {
   return out.str();
 }
 
+std::string now_iso_utc() {
+  const auto now = std::chrono::system_clock::now();
+  const std::time_t value = std::chrono::system_clock::to_time_t(now);
+  std::tm tm{};
+  gmtime_r(&value, &tm);
+  std::ostringstream out;
+  out << std::put_time(&tm, "%Y-%m-%dT%H:%M:%SZ");
+  return out.str();
+}
+
 bool write_all_stdout(const BYTE* data, DWORD size) {
   std::size_t offset = 0;
   while (offset < size && !g_stop.load()) {
@@ -111,8 +121,64 @@ void CALLBACK stream_callback(LONG, DWORD dataType, BYTE* buffer, DWORD size, vo
   }
 }
 
-void CALLBACK alarm_callback(LONG command, NET_DVR_ALARMER*, char*, DWORD size, void*) {
-  std::cout << "{\"command\":" << command << ",\"size\":" << size << "}" << std::endl;
+const char* alarm_type_name(DWORD type) {
+  switch (type) {
+    case 0: return "io_alarm";
+    case 1: return "disk_full";
+    case 2: return "video_loss";
+    case 3: return "motion";
+    case 4: return "disk_unformatted";
+    case 5: return "disk_error";
+    case 6: return "tamper";
+    case 7: return "video_standard_mismatch";
+    case 8: return "illegal_access";
+    case 9: return "video_signal_abnormal";
+    case 10: return "recording_exception";
+    case 11: return "scene_change";
+    case 12: return "array_exception";
+    case 13: return "resolution_mismatch";
+    case 15: return "smart_detection";
+    case 16: return "poe_exception";
+    case 19: return "audio_loss";
+    default: return "hikvision_alarm";
+  }
+}
+
+void emit_alarm_json(LONG command, const char* eventType, int physicalChannel, DWORD alarmType, DWORD eventCode = 0) {
+  std::cout
+      << "{\"command\":" << command
+      << ",\"event_type\":\"" << eventType << "\""
+      << ",\"event_state\":\"active\""
+      << ",\"physical_channel\":" << physicalChannel
+      << ",\"alarm_type\":" << alarmType
+      << ",\"event_code\":" << eventCode
+      << ",\"occurred_at\":\"" << now_iso_utc() << "\"}"
+      << std::endl;
+}
+
+void CALLBACK alarm_callback(LONG command, NET_DVR_ALARMER*, char* alarmInfo, DWORD size, void*) {
+  if (!alarmInfo || !size) return;
+  if (command == COMM_ALARM_V30 && size >= sizeof(NET_DVR_ALARMINFO_V30)) {
+    const auto* info = reinterpret_cast<const NET_DVR_ALARMINFO_V30*>(alarmInfo);
+    bool emitted = false;
+    for (int index = 0; index < MAX_CHANNUM_V30; ++index) {
+      if (info->byChannel[index] != 1) continue;
+      emit_alarm_json(command, alarm_type_name(info->dwAlarmType), index + 1, info->dwAlarmType);
+      emitted = true;
+    }
+    if (!emitted && info->dwAlarmType == 0) emit_alarm_json(command, "io_alarm", 0, info->dwAlarmType);
+    return;
+  }
+#ifdef COMM_ALARM_RULE
+  if (command == COMM_ALARM_RULE && size >= sizeof(NET_VCA_RULE_ALARM)) {
+    const auto* info = reinterpret_cast<const NET_VCA_RULE_ALARM*>(alarmInfo);
+    int channel = static_cast<int>(info->struDevInfo.byIvmsChannel);
+    if (channel <= 0) channel = static_cast<int>(info->struDevInfo.byChannel);
+    emit_alarm_json(command, "vca_rule", channel, 0, info->struRuleInfo.dwEventType);
+    return;
+  }
+#endif
+  std::cout << "{\"command\":" << command << ",\"event_type\":\"hikvision_alarm\",\"event_state\":\"active\",\"physical_channel\":0,\"size\":" << size << ",\"occurred_at\":\"" << now_iso_utc() << "\"}" << std::endl;
 }
 
 class SdkSession {
@@ -138,7 +204,7 @@ class SdkSession {
     std::strncpy(login.sPassword, password.c_str(), sizeof(login.sPassword) - 1);
     login.wPort = static_cast<WORD>(env_int("HIK_SDK_PORT", 8000));
     login.bUseAsynLogin = FALSE;
-    login.byLoginMode = 0; // Hikvision private Device Network SDK protocol, never ISAPI.
+    login.byLoginMode = 0;
     login.byUseUTCTime = 1;
 
     userId_ = NET_DVR_Login_V40(&login, &info);
@@ -236,7 +302,7 @@ void mode_live(SdkSession& sdk) {
   NET_DVR_PREVIEWINFO preview{};
   preview.lChannel = env_int("HIK_SDK_CHANNEL", 1);
   preview.dwStreamType = logical_stream_type();
-  preview.dwLinkMode = 0; // private TCP path selected by HCNetSDK; no RTSP URL is supplied.
+  preview.dwLinkMode = 0;
   preview.hPlayWnd = 0;
   preview.bBlocked = TRUE;
 
@@ -286,6 +352,7 @@ void mode_events(SdkSession& sdk) {
   setup.dwSize = sizeof(setup);
   setup.byLevel = 1;
   setup.byAlarmInfoType = 1;
+  setup.byRetAlarmTypeV40 = 0; // request common alarms as COMM_ALARM_V30 with direct byChannel[] mapping
   LONG alarm = NET_DVR_SetupAlarmChan_V41(sdk.user_id(), &setup);
   if (alarm < 0) sdk.fail("NET_DVR_SetupAlarmChan_V41");
   while (!g_stop.load()) std::this_thread::sleep_for(std::chrono::milliseconds(250));
