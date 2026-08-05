@@ -26,6 +26,15 @@ function syntheticStream(physical: number, type: StreamType, previous?: Hikvisio
   };
 }
 
+export function resolveNativeChannelEnabled(overrideEnabled: boolean | undefined): boolean {
+  // Legacy ISAPI discovery mixed device-reported channel status into the
+  // persisted `enabled` field. Native HCNetSDK discovery must not inherit that
+  // historical value, otherwise a previously device-reported false can keep a
+  // working SDK channel disabled forever. Only an explicit master override may
+  // disable a configured native channel; online/offline is tracked separately.
+  return overrideEnabled ?? true;
+}
+
 function buildChannel(
   device: HikvisionDeviceConfig,
   physical: number,
@@ -48,7 +57,7 @@ function buildChannel(
     sdk_channel: sdkChannel,
     name: previous?.name || `${device.name} channel ${physical}`,
     online,
-    enabled: override.enabled ?? previous?.enabled ?? true,
+    enabled: resolveNativeChannelEnabled(override.enabled),
     primary_stream_id: primary,
     archive_track_ids: previous?.archive_track_ids?.length ? previous.archive_track_ids : [streams[0]!.id],
     archive_storage: override.archive_storage || device.archive_storage,
