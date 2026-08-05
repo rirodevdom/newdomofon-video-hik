@@ -98,6 +98,18 @@ jobs:
           grep -q 'startGroupedPlayback' src/nativeSdk/archiveSessions.ts
           ! grep -q 'spawnNativeStream' src/nativeSdk/archiveSessions.ts
           ! grep -R -E '/ISAPI/|rtsp://' src/nativeSdk native-sdk/hik_sdk_worker.cpp native-sdk/hik_sdk_device_worker.cpp
+      - name: Validate native archive browser compatibility
+        run: |
+          python3 -m py_compile scripts/patch-native-archive-browser-compat.py
+          python3 scripts/patch-native-archive-browser-compat.py --project-dir .
+          before="$(sha256sum src/nativeSdk/archiveSessions.ts | awk '{print $1}')"
+          python3 scripts/patch-native-archive-browser-compat.py --project-dir .
+          after="$(sha256sum src/nativeSdk/archiveSessions.ts | awk '{print $1}')"
+          test "$before" = "$after"
+          grep -q "'-hls_segment_type', 'fmp4'" src/nativeSdk/archiveSessions.ts
+          grep -q "'-hls_fmp4_init_filename', 'init.mp4'" src/nativeSdk/archiveSessions.ts
+          grep -q "'seg_%06d.m4s'" src/nativeSdk/archiveSessions.ts
+          ! grep -q "'seg_%06d.ts'" src/nativeSdk/archiveSessions.ts
       - name: Install locked dependencies
         run: |
           gzip -dc package-lock.json.gz > package-lock.json
