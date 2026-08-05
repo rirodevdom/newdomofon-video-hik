@@ -57,7 +57,9 @@ function executable(file: string): boolean {
 }
 
 export function nativeSdkAvailable(): boolean {
-  return executable(config.nativeSdkWorker);
+  return executable(config.nativeSdkWorker)
+    && executable(config.nativeSdkChannelProbe)
+    && executable(config.nativeSdkDeviceWorker);
 }
 
 export function sdkChannel(channel: HikvisionChannel): number {
@@ -66,7 +68,19 @@ export function sdkChannel(channel: HikvisionChannel): number {
   return direct;
 }
 
-async function runJsonExecutable<T>(
+// Hikvision's Linux SDK allocates substantial process-global resources during
+// NET_DVR_Init(). Production showed NET_DVR_ALLOC_RESOURCE_ERROR (41) when many
+// helper processes initialized simultaneously. Keep transient probe/range jobs
+// strictly serialized; persistent live/alarm uses one grouped process per DVR.
+let helperQueue: Promise<void> = Promise.resolve();
+
+function serializeHelper<T>(task: () => Promise<T>): Promise<T> {
+  const run = helperQueue.then(task, task);
+  helperQueue = run.then(() => undefined, () => undefined);
+  return run;
+}
+
+async function runJsonExecutableNow<T>(
   file: string,
   args: string[],
   device: HikvisionDeviceConfig,
@@ -98,6 +112,16 @@ async function runJsonExecutable<T>(
   return JSON.parse(jsonLine) as T;
 }
 
+function runJsonExecutable<T>(
+  file: string,
+  args: string[],
+  device: HikvisionDeviceConfig,
+  label: string,
+  extra: Record<string, string> = {}
+): Promise<T> {
+  return serializeHelper(() => runJsonExecutableNow<T>(file, args, device, label, extra));
+}
+
 export function runNativeJson<T>(device: HikvisionDeviceConfig, mode: 'probe' | 'ranges', extra: Record<string, string> = {}): Promise<T> {
   return runJsonExecutable<T>(config.nativeSdkWorker, [mode], device, `HCNetSDK ${mode}`, extra);
 }
@@ -126,11 +150,19 @@ export function spawnNativeStream(
   mode: 'live' | 'playback' | 'events',
   extra: Record<string, string> = {}
 ): ChildProcessWithoutNullStreams {
-  if (!nativeSdkAvailable()) throw new Error(`HCNetSDK worker is not installed: ${config.nativeSdkWorker}`);
+  if (!nativeSdkAvailable()) throw new Error(`HCNetSDK runtime is not fully installed`);
   const env: NodeJS.ProcessEnv = { ...deviceEnv(device), ...extra };
   if (mode !== 'events') {
     if (!env.HIK_SDK_CHANNEL) env.HIK_SDK_CHANNEL = String(sdkChannel(channel));
     if (!env.HIK_SDK_STREAM_TYPE) env.HIK_SDK_STREAM_TYPE = '0';
   }
   return spawn(config.nativeSdkWorker, [mode], { env, stdio: ['pipe', 'pipe', 'pipe'] });
+}
+
+export function spawnNativeDeviceWorker(device: HikvisionDeviceConfig, liveConfigPath: string): ChildProcessWithoutNullStreams {
+  if (!nativeSdkAvailable()) throw new Error(`HCNetSDK grouped runtime is not fully installed`);
+  return spawn(config.nativeSdkDeviceWorker, [], {
+    env: { ...deviceEnv(device), HIK_SDK_DEVICE_LIVE_CONFIG: liveConfigPath },
+    stdio: ['ignore', 'pipe', 'pipe']
+  });
 }
