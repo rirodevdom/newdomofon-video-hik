@@ -12,5 +12,9 @@ test('media readiness patch is materialized before tests', async () => {
   assert.match(routes, /waitForLivePlaylist/);
   assert.match(index, /live_expected/);
   assert.match(index, /live_ready/);
-  assert.match(updater, /live_ready < live_expected/);
+  assert.match(index, /live_devices_expected/);
+  assert.match(index, /live_devices_ready/);
+  assert.match(index, /live_unready/);
+  assert.match(updater, /live_devices_ready < live_devices_expected/);
+  assert.doesNotMatch(updater, /live_ready < live_expected/);
 });

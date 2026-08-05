@@ -52,6 +52,8 @@ channels = int(data.get("channels") or 0)
 recorders = int(data.get("recorders") or 0)
 live_expected = int(data.get("live_expected") or 0)
 live_ready = int(data.get("live_ready") or 0)
+live_devices_expected = int(data.get("live_devices_expected") or 0)
+live_devices_ready = int(data.get("live_devices_ready") or 0)
 sync_errors = int(data.get("sync_errors") or 0)
 paired = bool(data.get("master_pairing"))
 if sync_errors > 0:
@@ -60,7 +62,13 @@ if paired and devices > 0 and channels <= 0:
     raise SystemExit(1)
 if live_expected > 0 and recorders <= 0:
     raise SystemExit(1)
-if live_expected > 0 and live_ready < live_expected:
+# Hybrid/analog DVRs can expose enabled inputs without an actual video signal.
+# A no-signal input must not roll back an otherwise healthy grouped runtime.
+# Require fresh media from every DVR that has expected channels, not from every
+# individual physical input.
+if live_devices_expected > 0 and live_devices_ready < live_devices_expected:
+    raise SystemExit(1)
+if live_expected > 0 and live_ready <= 0:
     raise SystemExit(1)
 ' 
 }
@@ -125,12 +133,19 @@ for _ in $(seq 1 90); do
   if [[ -n "$LAST_HEALTH" ]] && health_ready <<<"$LAST_HEALTH"; then
     printf '%s\n' "$LAST_HEALTH"
     SERVICE_STOPPED=0
-    log "Update completed; grouped HCNetSDK runtime, native sync and live readiness recovered; backup: $BACKUP_DIR"
+    log "Update completed; grouped HCNetSDK runtime, native sync and per-DVR live readiness recovered; backup: $BACKUP_DIR"
     exit 0
   fi
   sleep 1
 done
 
 printf 'Last health response: %s\n' "${LAST_HEALTH:-<none>}" >&2
+if [[ -n "${DVR_NODE_TOKEN:-}" ]]; then
+  echo "Recorder diagnostics:" >&2
+  curl -fsS \
+    -H "Authorization: Bearer ${DVR_NODE_TOKEN}" \
+    "http://127.0.0.1:${HEALTH_PORT}/api/v1/control/recorders" \
+    2>/dev/null | python3 -m json.tool >&2 || true
+fi
 journalctl -u "$SERVICE_NAME" -n 200 --no-pager
-fail "Updated service started but grouped HCNetSDK runtime/sync/live readiness did not recover"
+fail "Updated service started but grouped HCNetSDK runtime/sync/per-DVR live readiness did not recover"
