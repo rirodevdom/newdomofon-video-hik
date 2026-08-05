@@ -15,6 +15,20 @@ export interface NativeProbe {
   sub_proto: number;
 }
 
+export interface NativeChannelInventoryItem {
+  physical_channel: number;
+  sdk_channel: number;
+  kind: 'analog' | 'digital';
+  configured: boolean;
+  online: boolean | null;
+}
+
+export interface NativeChannelInventory {
+  transport: string;
+  config_available: boolean;
+  channels: NativeChannelInventoryItem[];
+}
+
 export interface NativeArchiveItem {
   start: string;
   end: string;
@@ -33,13 +47,17 @@ function deviceEnv(device: HikvisionDeviceConfig): NodeJS.ProcessEnv {
   };
 }
 
-export function nativeSdkAvailable(): boolean {
+function executable(file: string): boolean {
   try {
-    fs.accessSync(config.nativeSdkWorker, fs.constants.X_OK);
+    fs.accessSync(file, fs.constants.X_OK);
     return true;
   } catch {
     return false;
   }
+}
+
+export function nativeSdkAvailable(): boolean {
+  return executable(config.nativeSdkWorker);
 }
 
 export function sdkChannel(channel: HikvisionChannel): number {
@@ -48,9 +66,15 @@ export function sdkChannel(channel: HikvisionChannel): number {
   return direct;
 }
 
-export async function runNativeJson<T>(device: HikvisionDeviceConfig, mode: 'probe' | 'ranges', extra: Record<string, string> = {}): Promise<T> {
-  if (!nativeSdkAvailable()) throw new Error(`HCNetSDK worker is not installed: ${config.nativeSdkWorker}`);
-  const child = spawn(config.nativeSdkWorker, [mode], {
+async function runJsonExecutable<T>(
+  file: string,
+  args: string[],
+  device: HikvisionDeviceConfig,
+  label: string,
+  extra: Record<string, string> = {}
+): Promise<T> {
+  if (!executable(file)) throw new Error(`${label} is not installed: ${file}`);
+  const child = spawn(file, args, {
     env: { ...deviceEnv(device), ...extra },
     stdio: ['ignore', 'pipe', 'pipe']
   });
@@ -61,21 +85,29 @@ export async function runNativeJson<T>(device: HikvisionDeviceConfig, mode: 'pro
   const code = await new Promise<number | null>((resolve, reject) => {
     const timer = setTimeout(() => {
       child.kill('SIGTERM');
-      reject(new Error(`HCNetSDK ${mode} exceeded ${config.nativeSdkCommandTimeoutMs} ms`));
+      reject(new Error(`${label} exceeded ${config.nativeSdkCommandTimeoutMs} ms`));
     }, config.nativeSdkCommandTimeoutMs);
     timer.unref?.();
     child.once('error', (error) => { clearTimeout(timer); reject(error); });
     child.once('exit', (exitCode) => { clearTimeout(timer); resolve(exitCode); });
   });
-  if (code !== 0) throw new Error(`HCNetSDK ${mode} failed (${code}): ${stderr.trim().slice(-2000)}`);
+  if (code !== 0) throw new Error(`${label} failed (${code}): ${stderr.trim().slice(-2000)}`);
   const lines = stdout.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
   const jsonLine = [...lines].reverse().find((line) => line.startsWith('{'));
-  if (!jsonLine) throw new Error(`HCNetSDK ${mode} returned no JSON payload`);
+  if (!jsonLine) throw new Error(`${label} returned no JSON payload`);
   return JSON.parse(jsonLine) as T;
+}
+
+export function runNativeJson<T>(device: HikvisionDeviceConfig, mode: 'probe' | 'ranges', extra: Record<string, string> = {}): Promise<T> {
+  return runJsonExecutable<T>(config.nativeSdkWorker, [mode], device, `HCNetSDK ${mode}`, extra);
 }
 
 export function probeNativeDevice(device: HikvisionDeviceConfig): Promise<NativeProbe> {
   return runNativeJson<NativeProbe>(device, 'probe');
+}
+
+export function probeNativeChannels(device: HikvisionDeviceConfig): Promise<NativeChannelInventory> {
+  return runJsonExecutable<NativeChannelInventory>(config.nativeSdkChannelProbe, [], device, 'HCNetSDK channel inventory');
 }
 
 export async function findNativeArchive(device: HikvisionDeviceConfig, channel: HikvisionChannel, start: Date, end: Date): Promise<NativeArchiveItem[]> {
@@ -95,16 +127,10 @@ export function spawnNativeStream(
   extra: Record<string, string> = {}
 ): ChildProcessWithoutNullStreams {
   if (!nativeSdkAvailable()) throw new Error(`HCNetSDK worker is not installed: ${config.nativeSdkWorker}`);
-  const env: NodeJS.ProcessEnv = {
-    ...deviceEnv(device),
-    ...extra
-  };
+  const env: NodeJS.ProcessEnv = { ...deviceEnv(device), ...extra };
   if (mode !== 'events') {
     if (!env.HIK_SDK_CHANNEL) env.HIK_SDK_CHANNEL = String(sdkChannel(channel));
     if (!env.HIK_SDK_STREAM_TYPE) env.HIK_SDK_STREAM_TYPE = '0';
   }
-  return spawn(config.nativeSdkWorker, [mode], {
-    env,
-    stdio: ['pipe', 'pipe', 'pipe']
-  });
+  return spawn(config.nativeSdkWorker, [mode], { env, stdio: ['pipe', 'pipe', 'pipe'] });
 }
