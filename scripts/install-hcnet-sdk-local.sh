@@ -30,18 +30,10 @@ if [[ -f "$SOURCE" ]]; then
       command -v unzip >/dev/null 2>&1 || fail "unzip is required for .zip package"
       unzip -q "$SOURCE" -d "$INPUT_ROOT"
       ;;
-    *.tar.gz|*.tgz)
-      tar -xzf "$SOURCE" -C "$INPUT_ROOT"
-      ;;
-    *.tar.xz|*.txz)
-      tar -xJf "$SOURCE" -C "$INPUT_ROOT"
-      ;;
-    *.tar)
-      tar -xf "$SOURCE" -C "$INPUT_ROOT"
-      ;;
-    *)
-      fail "Unsupported SDK archive. Pass an extracted directory, .zip, .tar.gz, .tar.xz or .tar"
-      ;;
+    *.tar.gz|*.tgz) tar -xzf "$SOURCE" -C "$INPUT_ROOT" ;;
+    *.tar.xz|*.txz) tar -xJf "$SOURCE" -C "$INPUT_ROOT" ;;
+    *.tar) tar -xf "$SOURCE" -C "$INPUT_ROOT" ;;
+    *) fail "Unsupported SDK archive. Pass an extracted directory, .zip, .tar.gz, .tar.xz or .tar" ;;
   esac
 fi
 
@@ -52,47 +44,28 @@ LIB="$(find "$INPUT_ROOT" -type f \( -name libhcnetsdk.so -o -name 'libhcnetsdk.
 
 HEADER_DIR="$(dirname "$HEADER")"
 LIB_DIR="$(dirname "$LIB")"
-RUNTIME_SOURCE="$LIB_DIR"
-
 install -d -m 0755 "$SDK_ROOT/include" "$SDK_ROOT/runtime" "$SDK_ROOT/bin"
 rsync -a --delete "$HEADER_DIR/" "$SDK_ROOT/include/"
-rsync -a --delete "$RUNTIME_SOURCE/" "$SDK_ROOT/runtime/"
+rsync -a --delete "$LIB_DIR/" "$SDK_ROOT/runtime/"
 
 [[ -f "$SDK_ROOT/include/HCNetSDK.h" ]] || fail "Normalized HCNetSDK header is missing"
-RUNTIME_LIB="$(find "$SDK_ROOT/runtime" -maxdepth 2 -type f \( -name libhcnetsdk.so -o -name 'libhcnetsdk.so.*' \) -print -quit)"
-[[ -n "$RUNTIME_LIB" ]] || fail "Normalized libhcnetsdk.so is missing"
+[[ -f "$PROJECT_DIR/scripts/rebuild-hcnet-sdk-worker.sh" ]] || fail "Worker rebuild script is missing"
+
+log "Building native HCNetSDK worker and channel inventory helper"
+PROJECT_DIR="$PROJECT_DIR" HIK_SDK_ROOT="$SDK_ROOT" bash "$PROJECT_DIR/scripts/rebuild-hcnet-sdk-worker.sh"
+
+RUNTIME_LIB="$(find "$SDK_ROOT/runtime" -maxdepth 3 -type f \( -name libhcnetsdk.so -o -name 'libhcnetsdk.so.*' \) -print -quit)"
 RUNTIME_LIB_DIR="$(dirname "$RUNTIME_LIB")"
-
-SOURCE_CPP="$PROJECT_DIR/native-sdk/hik_sdk_worker.cpp"
-[[ -f "$SOURCE_CPP" ]] || fail "Worker source not found: $SOURCE_CPP"
-
-log "Building native HCNetSDK worker"
-g++ -std=c++17 -O2 -pthread \
-  -I"$SDK_ROOT/include" \
-  "$SOURCE_CPP" \
-  -L"$RUNTIME_LIB_DIR" -lhcnetsdk \
-  -Wl,-rpath,"$RUNTIME_LIB_DIR" \
-  -o "$SDK_ROOT/bin/hik-sdk-worker.bin"
-chmod 0755 "$SDK_ROOT/bin/hik-sdk-worker.bin"
-
-cat >"$SDK_ROOT/bin/hik-sdk-worker" <<EOF
-#!/usr/bin/env bash
-set -euo pipefail
-export HIK_SDK_LIB_DIR="${RUNTIME_LIB_DIR}"
-export LD_LIBRARY_PATH="${RUNTIME_LIB_DIR}:\${LD_LIBRARY_PATH:-}"
-exec "${SDK_ROOT}/bin/hik-sdk-worker.bin" "\$@"
-EOF
-chmod 0755 "$SDK_ROOT/bin/hik-sdk-worker"
-
 cat >"$SDK_ROOT/sdk.env" <<EOF
 HIK_SDK_ROOT=$SDK_ROOT
 HIK_SDK_LIB_DIR=$RUNTIME_LIB_DIR
 HIK_SDK_WORKER=$SDK_ROOT/bin/hik-sdk-worker
+HIK_SDK_CHANNEL_PROBE=$SDK_ROOT/bin/hik-sdk-channel-probe
 HIK_SDK_DEFAULT_PORT=8000
 EOF
 chmod 0644 "$SDK_ROOT/sdk.env"
 
 log "HCNetSDK installed locally from operator-supplied package"
 log "Worker: $SDK_ROOT/bin/hik-sdk-worker"
+log "Channel probe: $SDK_ROOT/bin/hik-sdk-channel-probe"
 log "No Hikvision SDK binaries were downloaded by this script"
-"$SDK_ROOT/bin/hik-sdk-worker" 2>&1 | head -n 1 || true
