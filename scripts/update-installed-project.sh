@@ -13,6 +13,15 @@ SERVICE_STOPPED=0
 fail() { echo "ERROR: $*" >&2; exit 1; }
 log() { printf '\n[%s] %s\n' "$(date '+%F %T')" "$*"; }
 
+set_env_default() {
+  local key="$1"
+  local value="$2"
+  if ! grep -qE "^${key}=" "$ENV_FILE"; then
+    printf '\n%s=%s\n' "$key" "$value" >>"$ENV_FILE"
+    log "Runtime env default added: $key=$value"
+  fi
+}
+
 recover_service_on_failure() {
   local status=$?
   trap - EXIT
@@ -46,7 +55,7 @@ live_ready = int(data.get("live_ready") or 0)
 paired = bool(data.get("master_pairing"))
 if paired and devices > 0 and channels <= 0:
     raise SystemExit(1)
-if channels > 0 and recorders <= 0:
+if live_expected > 0 and recorders <= 0:
     raise SystemExit(1)
 if live_expected > 0 and live_ready < live_expected:
     raise SystemExit(1)
@@ -77,8 +86,18 @@ rsync -a --delete \
 
 cd "$PROJECT_DIR"
 if [[ -f /opt/hikvision/hcnetsdk/include/HCNetSDK.h ]]; then
-  log "Rebuilding installed native HCNetSDK worker"
+  log "Rebuilding installed native HCNetSDK workers"
   PROJECT_DIR="$PROJECT_DIR" bash "$PROJECT_DIR/scripts/rebuild-hcnet-sdk-worker.sh"
+
+  # Once an operator has installed the vendor SDK, keep that node native-only
+  # unless an explicit setting already exists. This prevents a later missing or
+  # failed SDK path from silently returning the Hikvision node to RTSP/ISAPI.
+  set_env_default HIK_NATIVE_SDK_PREFERRED true
+  set_env_default HIK_NATIVE_SDK_REQUIRED true
+  set_env_default HIK_NATIVE_SDK_FALLBACK false
+  set_env_default HIK_SDK_WORKER /opt/hikvision/hcnetsdk/bin/hik-sdk-worker
+  set_env_default HIK_SDK_CHANNEL_PROBE /opt/hikvision/hcnetsdk/bin/hik-sdk-channel-probe
+  chmod 0600 "$ENV_FILE"
 else
   log "HCNetSDK is not installed; native worker rebuild skipped"
 fi
@@ -105,7 +124,7 @@ for _ in $(seq 1 90); do
   if [[ -n "$LAST_HEALTH" ]] && health_ready <<<"$LAST_HEALTH"; then
     printf '%s\n' "$LAST_HEALTH"
     SERVICE_STOPPED=0
-    log "Update completed; channels and fresh live playlists recovered; backup: $BACKUP_DIR"
+    log "Update completed; configured online channels and fresh native live playlists recovered; backup: $BACKUP_DIR"
     exit 0
   fi
   sleep 1
@@ -113,4 +132,4 @@ done
 
 printf 'Last health response: %s\n' "${LAST_HEALTH:-<none>}" >&2
 journalctl -u "$SERVICE_NAME" -n 200 --no-pager
-fail "Updated service started but did not recover channels and fresh live playlists"
+fail "Updated service started but did not recover configured online channels and fresh native live playlists"
