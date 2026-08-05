@@ -25,7 +25,6 @@ def patch_media(path: Path) -> None:
     import_anchor = "import { DeviceArchiveSessionManager } from '../archive/deviceArchiveSessions.js';\n"
     imports = import_anchor + "import { NativeSdkArchiveSessionManager } from '../nativeSdk/archiveSessions.js';\nimport { nativeArchiveRanges, streamNativeArchiveMp4 } from '../nativeSdk/archive.js';\nimport { nativeSdkActive } from '../nativeSdk/runtime.js';\n\nconst NATIVE_SDK_MEDIA_RUNTIME = 'newdomofon-hik-native-sdk-media-runtime';\n"
     text = replace_once(text, import_anchor, imports, "native SDK media imports")
-
     text = replace_once(
         text,
         "export function createMediaRouter(service: HikvisionNodeService, sessions: DeviceArchiveSessionManager): Router {",
@@ -61,6 +60,12 @@ def patch_index(path: Path) -> None:
         "  const eventCollector = new HikvisionEventCollector(service);",
         "  const eventCollector = nativeSdkActive() ? new NativeSdkEventCollector(service) : new HikvisionEventCollector(service);",
         "native SDK event collector selection",
+    )
+    text = replace_once(
+        text,
+        "      isapi: true,\n      master_pairing: masterAgent.enabled,",
+        "      hcnetsdk: nativeSdkActive(),\n      isapi: !nativeSdkActive(),\n      transport: nativeSdkActive() ? 'hcnet-private-sdk' : 'legacy-compatibility',\n      master_pairing: masterAgent.enabled,",
+        "native SDK health transport",
     )
     path.write_text(text, encoding="utf-8")
 
