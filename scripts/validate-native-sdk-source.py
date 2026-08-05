@@ -14,6 +14,8 @@ tester = (root / 'scripts' / 'test-hcnet-sdk-device.sh').read_text(encoding='utf
 client = (root / 'src' / 'nativeSdk' / 'client.ts').read_text(encoding='utf-8')
 recorder = (root / 'src' / 'nativeSdk' / 'recorderManager.ts').read_text(encoding='utf-8')
 events = (root / 'src' / 'nativeSdk' / 'eventCollector.ts').read_text(encoding='utf-8')
+archive_sessions = (root / 'src' / 'nativeSdk' / 'archiveSessions.ts').read_text(encoding='utf-8')
+device_runtime = (root / 'src' / 'nativeSdk' / 'deviceRuntime.ts').read_text(encoding='utf-8')
 
 required = [
     'NET_DVR_Login_V40',
@@ -47,6 +49,10 @@ device_required = [
     'NET_DVR_Login_V40',
     'NET_DVR_RealPlay_V40',
     'NET_DVR_SetupAlarmChan_V41',
+    'NET_DVR_PlayBackByTime',
+    'NET_DVR_SetPlayDataCallBack_V40',
+    'PLAYBACK',
+    'STOP_PLAYBACK',
     'grouped_stream_callback',
     'mkfifo',
 ]
@@ -95,6 +101,17 @@ if 'serializeHelper' not in client or 'spawnNativeDeviceWorker' not in client:
     raise SystemExit('transient HCNetSDK helpers must be serialized and grouped device worker exposed')
 if 'grouped runtime started channels=' not in recorder or 'spawnNativeDeviceWorker' not in recorder:
     raise SystemExit('recorder manager is not using one grouped worker per DVR')
+if 'registerNativeDeviceRuntime' not in recorder or 'unregisterNativeDeviceRuntime' not in recorder:
+    raise SystemExit('grouped DVR workers must be registered for archive commands')
+if "config.liveStreamPolicy !== 'primary'" not in recorder or "item.stream_type === 'sub'" not in recorder:
+    raise SystemExit('native grouped live must prefer substream unless primary is explicitly requested')
+if 'startGroupedPlayback' not in archive_sessions or 'stopGroupedPlayback' not in archive_sessions:
+    raise SystemExit('native archive sessions must use grouped DVR playback commands')
+if "spawnNativeStream" in archive_sessions:
+    raise SystemExit('native HLS archive sessions must not spawn a standalone HCNetSDK playback worker')
+for marker in ('PLAYBACK', 'STOP_PLAYBACK', 'registerNativeDeviceRuntime'):
+    if marker not in device_runtime and marker == 'registerNativeDeviceRuntime':
+        raise SystemExit('grouped runtime command registry is missing')
 if 'onNativeRuntimeAlarm' not in events:
     raise SystemExit('native events must be consumed from grouped device workers')
 if 'No RTSP URL or ISAPI HTTP endpoint is used by this test.' not in tester:
