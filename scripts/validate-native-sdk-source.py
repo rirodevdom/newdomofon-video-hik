@@ -53,6 +53,8 @@ device_required = [
 device_missing = [marker for marker in device_required if marker not in device_worker]
 if device_missing:
     raise SystemExit(f'missing grouped HCNetSDK device markers: {device_missing}')
+if '} // namespace\n\nint main()' not in device_worker:
+    raise SystemExit('grouped HCNetSDK device worker must close its anonymous namespace before global main()')
 
 for file_name, text in (('worker', worker), ('channel probe', channel_probe), ('device worker', device_worker)):
     for forbidden in ('/ISAPI/', 'rtsp://', '-rtsp_transport'):
