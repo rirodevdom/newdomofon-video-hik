@@ -11,7 +11,7 @@ test('retired archive files stay available while a client still accesses them', 
 });
 
 test('fMP4 EXT-X-MAP URI receives the node media token', () => {
-  assert.match(mediaRoutes, /appendTokenToUri/);
-  assert.match(mediaRoutes, /URI=\\"\(\[\^\\"\]\+\)\\"/);
+  assert.match(mediaRoutes, /function appendTokenToUri/);
+  assert.match(mediaRoutes, /line\.replace\(\/URI=/);
   assert.match(mediaRoutes, /appendTokenToUri\(uri, token\)/);
 });
