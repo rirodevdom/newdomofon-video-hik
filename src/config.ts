@@ -57,12 +57,11 @@ export const config = {
   ffprobePath: process.env.FFPROBE_PATH || '/usr/bin/ffprobe',
 
   nativeSdkWorker: process.env.HIK_SDK_WORKER || '/opt/hikvision/hcnetsdk/bin/hik-sdk-worker',
+  nativeSdkChannelProbe: process.env.HIK_SDK_CHANNEL_PROBE || '/opt/hikvision/hcnetsdk/bin/hik-sdk-channel-probe',
   nativeSdkDefaultPort: numberEnv('HIK_SDK_DEFAULT_PORT', 8000, 1),
   nativeSdkCommandTimeoutMs: numberEnv('HIK_SDK_COMMAND_TIMEOUT_MS', 20_000, 1000),
   nativeSdkPreferred: boolEnv('HIK_NATIVE_SDK_PREFERRED', true),
   nativeSdkRequired: boolEnv('HIK_NATIVE_SDK_REQUIRED', false),
-  // Operational SDK failures do not silently fall back to RTSP/ISAPI unless
-  // the operator explicitly opts in. This keeps a native-enabled node native.
   nativeSdkFallback: boolEnv('HIK_NATIVE_SDK_FALLBACK', false),
 
   requestTimeoutMs: numberEnv('HIK_ISAPI_TIMEOUT_MS', 10_000, 1000),
