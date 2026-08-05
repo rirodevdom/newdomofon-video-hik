@@ -163,6 +163,6 @@ export function spawnNativeDeviceWorker(device: HikvisionDeviceConfig, liveConfi
   if (!nativeSdkAvailable()) throw new Error(`HCNetSDK grouped runtime is not fully installed`);
   return spawn(config.nativeSdkDeviceWorker, [], {
     env: { ...deviceEnv(device), HIK_SDK_DEVICE_LIVE_CONFIG: liveConfigPath },
-    stdio: ['ignore', 'pipe', 'pipe']
+    stdio: ['pipe', 'pipe', 'pipe']
   });
 }
