@@ -109,8 +109,8 @@ def patch_index(path: Path) -> None:
     new_health = '''  app.get('/health', (_req, res) => {
     const channels = service.allChannels();
     const statuses = new Map(service.recorderManager.allStatuses().map((item) => [item.channel_id, item]));
-    const liveExpected = channels.filter((item) => item.channel.enabled && item.channel.online !== false).length;
-    const liveReady = channels.filter((item) => {
+    const liveCandidates = channels.filter((item) => item.channel.enabled && item.channel.online !== false);
+    const readyIds = new Set(liveCandidates.filter((item) => {
       const status = statuses.get(item.channel.id);
       if (!status?.running || !status.started_at) return false;
       const root = item.channel.archive_storage === 'node' ? archiveDir(item.channel.id) : liveDir(item.channel.id);
@@ -120,16 +120,36 @@ def patch_index(path: Path) -> None:
       } catch {
         return false;
       }
-    }).length;
+    }).map((item) => item.channel.id));
+    const liveExpected = liveCandidates.length;
+    const liveReady = readyIds.size;
+    const expectedDeviceIds = new Set(liveCandidates.map((item) => item.device_id));
+    const readyDeviceIds = new Set(liveCandidates.filter((item) => readyIds.has(item.channel.id)).map((item) => item.device_id));
+    const liveUnready = liveCandidates
+      .filter((item) => !readyIds.has(item.channel.id))
+      .map((item) => {
+        const status = statuses.get(item.channel.id);
+        return {
+          device_id: item.device_id,
+          channel_id: item.channel.id,
+          physical_channel: item.channel.physical_channel,
+          sdk_channel: item.channel.sdk_channel ?? item.channel.physical_channel,
+          recorder_running: Boolean(status?.running),
+          restarts: status?.restarts ?? 0
+        };
+      });
     res.json({
       ok: true,
       service: 'newdomofon-video-hik',
-      version: '0.3.1',
+      version: '0.3.2',
       devices: service.listDevices().length,
       channels: channels.length,
       recorders: service.recorderManager.allStatuses().filter((item) => item.running).length,
       live_expected: liveExpected,
-      live_ready: liveReady,'''
+      live_ready: liveReady,
+      live_devices_expected: expectedDeviceIds.size,
+      live_devices_ready: readyDeviceIds.size,
+      live_unready: liveUnready,'''
     text = replace_once(text, old_health, new_health, "playlist-backed health readiness")
     path.write_text(text, encoding="utf-8")
 
