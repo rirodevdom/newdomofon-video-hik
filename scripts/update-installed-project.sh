@@ -70,7 +70,7 @@ if live_devices_expected > 0 and live_devices_ready < live_devices_expected:
     raise SystemExit(1)
 if live_expected > 0 and live_ready <= 0:
     raise SystemExit(1)
-' 
+'
 }
 
 [[ "$(id -u)" -eq 0 ]] || fail "Run as root"
@@ -97,6 +97,9 @@ rsync -a --delete \
 
 cd "$PROJECT_DIR"
 if [[ -f /opt/hikvision/hcnetsdk/include/HCNetSDK.h ]]; then
+  log "Preparing bounded native archive playback pool"
+  python3 "$PROJECT_DIR/scripts/patch-native-archive-concurrency.py" --project-dir "$PROJECT_DIR"
+
   log "Rebuilding installed native HCNetSDK workers"
   PROJECT_DIR="$PROJECT_DIR" bash "$PROJECT_DIR/scripts/rebuild-hcnet-sdk-worker.sh"
 
@@ -106,6 +109,7 @@ if [[ -f /opt/hikvision/hcnetsdk/include/HCNetSDK.h ]]; then
   set_env_default HIK_SDK_WORKER /opt/hikvision/hcnetsdk/bin/hik-sdk-worker
   set_env_default HIK_SDK_CHANNEL_PROBE /opt/hikvision/hcnetsdk/bin/hik-sdk-channel-probe
   set_env_default HIK_SDK_DEVICE_WORKER /opt/hikvision/hcnetsdk/bin/hik-sdk-device-worker
+  set_env_default HIK_DEVICE_ARCHIVE_MAX_ACTIVE_PER_DVR 4
   chmod 0600 "$ENV_FILE"
 else
   log "HCNetSDK is not installed; native worker rebuild skipped"
