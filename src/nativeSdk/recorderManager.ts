@@ -6,6 +6,7 @@ import { config } from '../config.js';
 import type { HikvisionChannel, HikvisionDeviceConfig, RecorderStatus } from '../types.js';
 import { archiveDir, liveDir, safeId } from '../media/paths.js';
 import { spawnNativeDeviceWorker } from './client.js';
+import { registerNativeDeviceRuntime, unregisterNativeDeviceRuntime } from './deviceRuntime.js';
 import { emitNativeRuntimeAlarm, type NativeRuntimeAlarm } from './runtimeEvents.js';
 
 const execFileAsync = promisify(execFile);
@@ -25,6 +26,7 @@ interface RuntimeDevice {
   device: HikvisionDeviceConfig;
   channels: Map<string, RuntimeChannel>;
   worker: ChildProcess | null;
+  runtimeRegistration: number | null;
   restarts: number;
   lastError: string | null;
   restartTimer: NodeJS.Timeout | null;
@@ -36,6 +38,13 @@ interface RuntimeDevice {
 }
 
 function streamType(channel: HikvisionChannel): number {
+  // Persistent live is a monitoring feed. Prefer the NVR substream in native
+  // mode unless the operator explicitly requests primary/main. Sixteen main
+  // streams can exhaust recorder bandwidth even though RealPlay handles open.
+  if (config.liveStreamPolicy !== 'primary') {
+    const sub = channel.streams.find((item) => item.enabled !== false && item.stream_type === 'sub');
+    if (sub) return 1;
+  }
   const selected = channel.streams.find((item) => item.id === channel.primary_stream_id);
   return selected?.stream_type === 'sub' ? 1 : selected?.stream_type === 'third' ? 2 : 0;
 }
@@ -50,7 +59,8 @@ function deviceKey(device: HikvisionDeviceConfig, channels: HikvisionChannel[]):
       channel.primary_stream_id,
       channel.archive_storage,
       channel.enabled,
-      channel.online
+      channel.online,
+      streamType(channel)
     ])
   });
 }
@@ -58,7 +68,11 @@ function deviceKey(device: HikvisionDeviceConfig, channels: HikvisionChannel[]):
 function hlsArgs(channel: HikvisionChannel, fifoPath: string): { cwd: string; args: string[] } {
   const nodeArchive = channel.archive_storage === 'node';
   const cwd = nodeArchive ? archiveDir(channel.id) : liveDir(channel.id);
-  const codec = channel.streams.find((item) => item.id === channel.primary_stream_id)?.video_codec || '';
+  const selectedType = streamType(channel);
+  const selectedStream = channel.streams.find((item) => (
+    selectedType === 1 ? item.stream_type === 'sub' : selectedType === 2 ? item.stream_type === 'third' : item.stream_type === 'main'
+  ));
+  const codec = selectedStream?.video_codec || '';
   const transcodeVideo = config.transcodeH265 && /H\.?265|HEVC/i.test(codec);
   const segmentPattern = nodeArchive
     ? '%Y-%m-%d/%H/%Y%m%d_%H%M%S.ts'
@@ -120,9 +134,6 @@ export class NativeSdkRecorderManager {
       }
     }
 
-    // Start DVRs sequentially so only one persistent NET_DVR_Init/login is
-    // entering the SDK at a time. Each process then owns all live handles and
-    // the alarm channel for that physical recorder.
     for (const [deviceId, next] of wanted) {
       if (!this.devices.has(deviceId)) await this.startDevice(next.device, next.channels);
     }
@@ -136,6 +147,7 @@ export class NativeSdkRecorderManager {
       device,
       channels: new Map(),
       worker: null,
+      runtimeRegistration: null,
       restarts: 0,
       lastError: null,
       restartTimer: null,
@@ -187,6 +199,7 @@ export class NativeSdkRecorderManager {
 
     const worker = spawnNativeDeviceWorker(runtime.device, runtime.configPath);
     runtime.worker = worker;
+    runtime.runtimeRegistration = registerNativeDeviceRuntime(runtime.device.id, worker);
     console.log(`[hcnetsdk-device:${runtime.device.id}] grouped runtime started channels=${runtime.channels.size}`);
 
     worker.stdout?.on('data', (chunk) => {
@@ -223,6 +236,10 @@ export class NativeSdkRecorderManager {
     });
 
     worker.once('exit', (code, signal) => {
+      if (runtime.runtimeRegistration !== null) {
+        unregisterNativeDeviceRuntime(runtime.device.id, runtime.runtimeRegistration);
+        runtime.runtimeRegistration = null;
+      }
       if (runtime.stopping || runtime.generation !== generation || !this.devices.has(runtime.device.id)) return;
       runtime.worker = null;
       runtime.restarts += 1;
@@ -263,6 +280,9 @@ export class NativeSdkRecorderManager {
     channelRuntime.startedAt = new Date();
     let stderr = '';
     ffmpeg.stderr?.on('data', (chunk) => { stderr = `${stderr}\n${String(chunk)}`.slice(-6000); });
+    ffmpeg.once('error', (error) => {
+      channelRuntime.lastError = error.message;
+    });
     ffmpeg.once('exit', (code, signal) => {
       if (deviceRuntime.stopping || !this.devices.has(deviceRuntime.device.id)) return;
       if (channelRuntime.ffmpeg !== ffmpeg) return;
@@ -288,6 +308,10 @@ export class NativeSdkRecorderManager {
     runtime.stopping = true;
     runtime.generation += 1;
     if (runtime.restartTimer) clearTimeout(runtime.restartTimer);
+    if (runtime.runtimeRegistration !== null) {
+      unregisterNativeDeviceRuntime(deviceId, runtime.runtimeRegistration);
+      runtime.runtimeRegistration = null;
+    }
     runtime.worker?.kill('SIGTERM');
     for (const channelRuntime of runtime.channels.values()) {
       if (channelRuntime.restartTimer) clearTimeout(channelRuntime.restartTimer);
@@ -320,7 +344,7 @@ export class NativeSdkRecorderManager {
         running,
         pid: channelRuntime.ffmpeg?.pid || runtime.worker?.pid || null,
         mode: channelRuntime.channel.archive_storage === 'node' ? 'node-archive' : 'live-only',
-        source_candidate: `hcnet-private-sdk://${runtime.device.host}:${config.nativeSdkDefaultPort}/channel/${channelRuntime.channel.sdk_channel ?? channelRuntime.channel.physical_channel}`,
+        source_candidate: `hcnet-private-sdk://${runtime.device.host}:${config.nativeSdkDefaultPort}/channel/${channelRuntime.channel.sdk_channel ?? channelRuntime.channel.physical_channel}/stream/${streamType(channelRuntime.channel)}`,
         restarts: runtime.restarts + channelRuntime.restarts,
         started_at: channelRuntime.startedAt?.toISOString() || null,
         last_error: channelRuntime.lastError || runtime.lastError
