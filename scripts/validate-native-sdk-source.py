@@ -53,6 +53,8 @@ device_required = [
     'NET_DVR_SetPlayDataCallBack_V40',
     'PLAYBACK',
     'STOP_PLAYBACK',
+    'PLAYBACK_STATUS',
+    'archive_playback',
     'grouped_stream_callback',
     'mkfifo',
 ]
@@ -107,11 +109,14 @@ if "config.liveStreamPolicy !== 'primary'" not in recorder or "item.stream_type 
     raise SystemExit('native grouped live must prefer substream unless primary is explicitly requested')
 if 'startGroupedPlayback' not in archive_sessions or 'stopGroupedPlayback' not in archive_sessions:
     raise SystemExit('native archive sessions must use grouped DVR playback commands')
-if "spawnNativeStream" in archive_sessions:
+if 'spawnNativeStream' in archive_sessions:
     raise SystemExit('native HLS archive sessions must not spawn a standalone HCNetSDK playback worker')
-for marker in ('PLAYBACK', 'STOP_PLAYBACK', 'registerNativeDeviceRuntime'):
-    if marker not in device_runtime and marker == 'registerNativeDeviceRuntime':
-        raise SystemExit('grouped runtime command registry is missing')
+for marker in ('PLAYBACK_STATUS', 'acknowledgement timed out', 'pendingAcks'):
+    if marker not in device_runtime:
+        raise SystemExit(f'grouped playback acknowledgement contract missing: {marker}')
+for marker in ('ffmpegErrors', 'readiness timeout'):
+    if marker not in archive_sessions:
+        raise SystemExit(f'archive playback diagnostics missing: {marker}')
 if 'onNativeRuntimeAlarm' not in events:
     raise SystemExit('native events must be consumed from grouped device workers')
 if 'No RTSP URL or ISAPI HTTP endpoint is used by this test.' not in tester:
