@@ -58,6 +58,7 @@ export const config = {
 
   nativeSdkWorker: process.env.HIK_SDK_WORKER || '/opt/hikvision/hcnetsdk/bin/hik-sdk-worker',
   nativeSdkChannelProbe: process.env.HIK_SDK_CHANNEL_PROBE || '/opt/hikvision/hcnetsdk/bin/hik-sdk-channel-probe',
+  nativeSdkDeviceWorker: process.env.HIK_SDK_DEVICE_WORKER || '/opt/hikvision/hcnetsdk/bin/hik-sdk-device-worker',
   nativeSdkDefaultPort: numberEnv('HIK_SDK_DEFAULT_PORT', 8000, 1),
   nativeSdkCommandTimeoutMs: numberEnv('HIK_SDK_COMMAND_TIMEOUT_MS', 20_000, 1000),
   nativeSdkPreferred: boolEnv('HIK_NATIVE_SDK_PREFERRED', true),
