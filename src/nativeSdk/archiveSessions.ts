@@ -1,11 +1,15 @@
 import crypto from 'node:crypto';
-import { spawn, type ChildProcess } from 'node:child_process';
+import { execFile, spawn, type ChildProcess } from 'node:child_process';
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { promisify } from 'node:util';
 import { config } from '../config.js';
 import type { HikvisionChannel, HikvisionDeviceConfig } from '../types.js';
 import { safeId } from '../media/paths.js';
-import { spawnNativeStream } from './client.js';
+import { sdkChannel } from './client.js';
+import { startGroupedPlayback, stopGroupedPlayback } from './deviceRuntime.js';
+
+const execFileAsync = promisify(execFile);
 
 export interface NativeArchiveSession {
   id: string;
@@ -22,8 +26,9 @@ export interface NativeArchiveSession {
 }
 
 interface RuntimeSession extends NativeArchiveSession {
-  worker: ChildProcess | null;
   ffmpeg: ChildProcess | null;
+  fifoPath: string;
+  playbackStarted: boolean;
   retiredAt: number | null;
 }
 
@@ -50,6 +55,11 @@ async function stopChild(child: ChildProcess | null): Promise<void> {
   if (child.exitCode === null) child.kill('SIGKILL');
 }
 
+async function makeFifo(fifoPath: string): Promise<void> {
+  await fs.rm(fifoPath, { force: true }).catch(() => undefined);
+  await execFileAsync('mkfifo', ['-m', '600', fifoPath]);
+}
+
 export class NativeSdkArchiveSessionManager {
   private readonly sessions = new Map<string, RuntimeSession>();
   private cleanupTimer: NodeJS.Timeout | null = null;
@@ -65,7 +75,7 @@ export class NativeSdkArchiveSessionManager {
     this.cleanupTimer = null;
     for (const session of this.sessions.values()) {
       session.status = 'cancelled';
-      session.worker?.kill('SIGTERM');
+      if (session.playbackStarted) void stopGroupedPlayback(session.deviceId, session.id);
       session.ffmpeg?.kill('SIGTERM');
     }
     this.sessions.clear();
@@ -86,10 +96,9 @@ export class NativeSdkArchiveSessionManager {
       return existing;
     }
 
-    // HCNetSDK/NVR playback resources are finite. Release every older upstream
-    // playback handle for this channel before opening the replacement. Its HLS
-    // files remain in the grace window so browsers finishing old requests do
-    // not receive 404s.
+    // Commands are delivered to the same persistent HCNetSDK process that owns
+    // live and alarms for this DVR. STOP then PLAYBACK are ordered on one stdin,
+    // so a seek never creates overlapping NET_DVR_Init/login processes.
     await this.retireChannel(channel.id, id);
 
     const dir = path.join(config.tempRoot, 'native-device-archive', safeId(channel.id), id);
@@ -99,7 +108,10 @@ export class NativeSdkArchiveSessionManager {
       id, channelId: channel.id, deviceId: device.id, start, end, dir,
       playlist: path.join(dir, 'index.m3u8'),
       status: 'preparing', error: null, createdAt: Date.now(), lastAccessAt: Date.now(),
-      worker: null, ffmpeg: null, retiredAt: null
+      ffmpeg: null,
+      fifoPath: path.join(dir, 'playback.ps.fifo'),
+      playbackStarted: false,
+      retiredAt: null
     };
     this.sessions.set(id, session);
     try {
@@ -110,7 +122,11 @@ export class NativeSdkArchiveSessionManager {
       session.status = 'error';
       session.error = error instanceof Error ? error.message : String(error);
       await this.stopRuntime(session);
-      throw Object.assign(new Error(session.error), { statusCode: 502 });
+      const rawStatus = error && typeof error === 'object' && 'statusCode' in error
+        ? Number((error as { statusCode?: unknown }).statusCode)
+        : 502;
+      const statusCode = Number.isInteger(rawStatus) && rawStatus >= 400 && rawStatus <= 599 ? rawStatus : 502;
+      throw Object.assign(new Error(session.error), { statusCode });
     }
   }
 
@@ -123,11 +139,12 @@ export class NativeSdkArchiveSessionManager {
 
   private async spawn(device: HikvisionDeviceConfig, channel: HikvisionChannel, session: RuntimeSession): Promise<void> {
     const duration = Math.max(1, Math.ceil((session.end.getTime() - session.start.getTime()) / 1000));
+    await makeFifo(session.fifoPath);
     const ffmpeg = spawn(config.ffmpegPath, [
       '-hide_banner', '-loglevel', config.logLevel,
       '-fflags', '+genpts+discardcorrupt',
       '-probesize', '2097152', '-analyzeduration', '2000000',
-      '-f', 'mpeg', '-i', 'pipe:0',
+      '-f', 'mpeg', '-i', session.fifoPath,
       '-t', String(duration),
       '-map', '0:v:0', '-map', '0:a?',
       '-c:v', 'libx264', '-preset', 'veryfast', '-tune', 'zerolatency', '-g', '50', '-sc_threshold', '0',
@@ -136,46 +153,55 @@ export class NativeSdkArchiveSessionManager {
       '-hls_flags', 'temp_file+program_date_time+independent_segments',
       '-hls_segment_filename', 'seg_%06d.ts',
       'index.m3u8'
-    ], { cwd: session.dir, stdio: ['pipe', 'ignore', 'pipe'], env: { ...process.env, TZ: 'UTC' } });
-    const worker = spawnNativeStream(device, channel, 'playback', {
-      HIK_SDK_START: session.start.toISOString(),
-      HIK_SDK_END: session.end.toISOString(),
-      HIK_SDK_STREAM_TYPE: '0'
-    });
+    ], { cwd: session.dir, stdio: ['ignore', 'ignore', 'pipe'], env: { ...process.env, TZ: 'UTC' } });
     session.ffmpeg = ffmpeg;
-    session.worker = worker;
-    worker.stdout?.pipe(ffmpeg.stdin!);
 
     let errors = '';
-    worker.stderr?.on('data', (chunk) => { errors = `${errors}\n${String(chunk)}`.slice(-5000); });
     ffmpeg.stderr?.on('data', (chunk) => { errors = `${errors}\n${String(chunk)}`.slice(-5000); });
-    const onExit = () => {
+    ffmpeg.once('error', (error) => {
+      if (session.status === 'preparing') {
+        session.status = 'error';
+        session.error = error.message;
+      }
+    });
+    ffmpeg.once('exit', (code, signal) => {
       if (session.status === 'retired' || session.status === 'cancelled') return;
       if (session.status === 'preparing') {
         session.status = 'error';
-        session.error = errors.trim() || 'HCNetSDK archive pipeline exited before becoming playable';
+        session.error = errors.trim() || `archive ffmpeg exited code=${code} signal=${signal}`;
       }
-    };
-    worker.once('exit', onExit);
-    ffmpeg.once('exit', onExit);
+    });
+
+    await startGroupedPlayback({
+      deviceId: device.id,
+      sessionId: session.id,
+      sdkChannel: sdkChannel(channel),
+      start: session.start,
+      end: session.end,
+      fifoPath: session.fifoPath
+    });
+    session.playbackStarted = true;
   }
 
   private async waitReady(session: RuntimeSession): Promise<void> {
     const deadline = Date.now() + READY_TIMEOUT_MS;
     while (Date.now() < deadline) {
-      if (session.status === 'error') throw new Error(session.error || 'HCNetSDK archive session failed');
+      if (session.status === 'error') throw Object.assign(new Error(session.error || 'HCNetSDK archive session failed'), { statusCode: 502 });
       if (await playable(session)) {
         session.status = 'ready';
         return;
       }
       await new Promise((resolve) => setTimeout(resolve, 100));
     }
-    throw Object.assign(new Error('HCNetSDK playback did not produce a playable HLS segment in time'), { statusCode: 503 });
+    throw Object.assign(new Error('HCNetSDK grouped playback did not produce a playable HLS segment in time'), { statusCode: 503 });
   }
 
   private async stopRuntime(session: RuntimeSession): Promise<void> {
-    await Promise.all([stopChild(session.worker), stopChild(session.ffmpeg)]);
-    session.worker = null;
+    if (session.playbackStarted) {
+      session.playbackStarted = false;
+      await stopGroupedPlayback(session.deviceId, session.id).catch(() => undefined);
+    }
+    await stopChild(session.ffmpeg);
     session.ffmpeg = null;
   }
 
