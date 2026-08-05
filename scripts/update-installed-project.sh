@@ -52,7 +52,10 @@ channels = int(data.get("channels") or 0)
 recorders = int(data.get("recorders") or 0)
 live_expected = int(data.get("live_expected") or 0)
 live_ready = int(data.get("live_ready") or 0)
+sync_errors = int(data.get("sync_errors") or 0)
 paired = bool(data.get("master_pairing"))
+if sync_errors > 0:
+    raise SystemExit(1)
 if paired and devices > 0 and channels <= 0:
     raise SystemExit(1)
 if live_expected > 0 and recorders <= 0:
@@ -89,9 +92,6 @@ if [[ -f /opt/hikvision/hcnetsdk/include/HCNetSDK.h ]]; then
   log "Rebuilding installed native HCNetSDK workers"
   PROJECT_DIR="$PROJECT_DIR" bash "$PROJECT_DIR/scripts/rebuild-hcnet-sdk-worker.sh"
 
-  # Once an operator has installed the vendor SDK, keep that node native-only
-  # unless an explicit setting already exists. This prevents a later missing or
-  # failed SDK path from silently returning the Hikvision node to RTSP/ISAPI.
   set_env_default HIK_NATIVE_SDK_PREFERRED true
   set_env_default HIK_NATIVE_SDK_REQUIRED true
   set_env_default HIK_NATIVE_SDK_FALLBACK false
@@ -124,7 +124,7 @@ for _ in $(seq 1 90); do
   if [[ -n "$LAST_HEALTH" ]] && health_ready <<<"$LAST_HEALTH"; then
     printf '%s\n' "$LAST_HEALTH"
     SERVICE_STOPPED=0
-    log "Update completed; configured online channels and fresh native live playlists recovered; backup: $BACKUP_DIR"
+    log "Update completed; native sync and configured live readiness recovered; backup: $BACKUP_DIR"
     exit 0
   fi
   sleep 1
@@ -132,4 +132,4 @@ done
 
 printf 'Last health response: %s\n' "${LAST_HEALTH:-<none>}" >&2
 journalctl -u "$SERVICE_NAME" -n 200 --no-pager
-fail "Updated service started but did not recover configured online channels and fresh native live playlists"
+fail "Updated service started but native sync/live readiness did not recover"

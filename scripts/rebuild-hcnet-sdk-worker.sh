@@ -3,6 +3,7 @@ set -Eeuo pipefail
 
 SDK_ROOT="${HIK_SDK_ROOT:-/opt/hikvision/hcnetsdk}"
 PROJECT_DIR="${PROJECT_DIR:-/opt/newdomofon-video-hik}"
+SERVICE_USER="${HIK_SERVICE_USER:-newdomofon-hik}"
 HEADER="$SDK_ROOT/include/HCNetSDK.h"
 WORKER_SOURCE="$PROJECT_DIR/native-sdk/hik_sdk_worker.cpp"
 CHANNEL_SOURCE="$PROJECT_DIR/native-sdk/hik_sdk_channel_probe.cpp"
@@ -13,10 +14,20 @@ fail() { echo "ERROR: $*" >&2; exit 1; }
 [[ -f "$CHANNEL_SOURCE" ]] || fail "Native channel probe source is missing: $CHANNEL_SOURCE"
 command -v g++ >/dev/null 2>&1 || fail "g++ is required to rebuild the installed HCNetSDK worker"
 
-LIB="$(find "$SDK_ROOT/runtime" -maxdepth 3 -type f \( -name libhcnetsdk.so -o -name 'libhcnetsdk.so.*' \) -print -quit)"
+LIB="$(find "$SDK_ROOT/runtime" -maxdepth 3 \( -type f -o -type l \) \( -name libhcnetsdk.so -o -name 'libhcnetsdk.so.*' \) -print -quit)"
 [[ -n "$LIB" ]] || fail "libhcnetsdk.so is not installed under $SDK_ROOT/runtime"
 LIB_DIR="$(dirname "$LIB")"
 install -d -m 0755 "$SDK_ROOT/bin"
+
+# The updater runs as root while the service runs as newdomofon-hik. Vendor
+# archives are not consistent about permissions, and a root-only SDK tree makes
+# ld.so report libhcnetsdk.so as unavailable from the service. Normalize every
+# parent directory and vendor runtime file for read/execute traversal without
+# granting write access to the service account.
+chown -R root:root "$SDK_ROOT"
+find "$SDK_ROOT" -type d -exec chmod 0755 {} +
+find "$SDK_ROOT/include" "$SDK_ROOT/runtime" -type f -exec chmod a+r {} +
+find "$SDK_ROOT/include" "$SDK_ROOT/runtime" -type f -exec chmod go-w {} +
 
 build_native() {
   local source="$1"
@@ -53,6 +64,10 @@ exec "$SDK_ROOT/bin/hik-sdk-channel-probe.bin" "\$@"
 EOF
 chmod 0755 "$SDK_ROOT/bin/hik-sdk-channel-probe"
 
-"$SDK_ROOT/bin/hik-sdk-worker" 2>&1 | head -n 1 || true
+# Root execution is not a sufficient production test. Verify the loader using
+# the exact account configured in the systemd service before declaring success.
+HIK_SDK_ROOT="$SDK_ROOT" HIK_SERVICE_USER="$SERVICE_USER" \
+  bash "$PROJECT_DIR/scripts/verify-hcnet-sdk-runtime.sh"
+
 echo "HCNetSDK worker rebuilt: $SDK_ROOT/bin/hik-sdk-worker"
 echo "HCNetSDK channel probe rebuilt: $SDK_ROOT/bin/hik-sdk-channel-probe"

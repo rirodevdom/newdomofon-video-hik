@@ -35,6 +35,7 @@ jobs:
         run: |
           bash -n scripts/install-hcnet-sdk-local.sh
           bash -n scripts/rebuild-hcnet-sdk-worker.sh
+          bash -n scripts/verify-hcnet-sdk-runtime.sh
           bash -n scripts/test-hcnet-sdk-device.sh
           python3 -m py_compile scripts/validate-native-sdk-source.py
           python3 scripts/validate-native-sdk-source.py
@@ -43,7 +44,8 @@ jobs:
           grep -q 'NET_DVR_PLAYSETTIME' native-sdk/hik_sdk_worker.cpp
           grep -q 'NET_DVR_SetupAlarmChan_V41' native-sdk/hik_sdk_worker.cpp
           grep -q 'COMM_ALARM_V30' native-sdk/hik_sdk_worker.cpp
-          grep -q 'rebuild-hcnet-sdk-worker.sh' scripts/update-installed-project.sh
+          grep -q 'verify-hcnet-sdk-runtime.sh' scripts/rebuild-hcnet-sdk-worker.sh
+          grep -q 'sync_errors' scripts/update-installed-project.sh
       - name: Validate fast media source patch
         run: |
           python3 -m py_compile scripts/patch-fast-media-startup.py
@@ -78,6 +80,7 @@ jobs:
           grep -q 'newdomofon-hik-native-sdk-media-runtime' src/http/mediaRoutes.ts
           grep -q 'NativeSdkArchiveSessionManager' src/index.ts
           grep -q 'NativeSdkEventCollector' src/index.ts
+          grep -q 'sync_errors' src/index.ts
           grep -q 'await discoverNativeHikvisionDevice' src/service.ts
           grep -q "transport: 'hcnet-private-sdk'" src/nativeSdk/discovery.ts
           ! grep -R -E '/ISAPI/|rtsp://' src/nativeSdk native-sdk/hik_sdk_worker.cpp
