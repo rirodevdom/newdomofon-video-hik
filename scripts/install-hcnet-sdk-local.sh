@@ -51,7 +51,7 @@ rsync -a --delete "$LIB_DIR/" "$SDK_ROOT/runtime/"
 [[ -f "$SDK_ROOT/include/HCNetSDK.h" ]] || fail "Normalized HCNetSDK header is missing"
 [[ -f "$PROJECT_DIR/scripts/rebuild-hcnet-sdk-worker.sh" ]] || fail "Worker rebuild script is missing"
 
-log "Building native HCNetSDK worker and channel inventory helper"
+log "Building native HCNetSDK workers"
 PROJECT_DIR="$PROJECT_DIR" HIK_SDK_ROOT="$SDK_ROOT" bash "$PROJECT_DIR/scripts/rebuild-hcnet-sdk-worker.sh"
 
 RUNTIME_LIB="$(find "$SDK_ROOT/runtime" -maxdepth 3 -type f \( -name libhcnetsdk.so -o -name 'libhcnetsdk.so.*' \) -print -quit)"
@@ -61,6 +61,7 @@ HIK_SDK_ROOT=$SDK_ROOT
 HIK_SDK_LIB_DIR=$RUNTIME_LIB_DIR
 HIK_SDK_WORKER=$SDK_ROOT/bin/hik-sdk-worker
 HIK_SDK_CHANNEL_PROBE=$SDK_ROOT/bin/hik-sdk-channel-probe
+HIK_SDK_DEVICE_WORKER=$SDK_ROOT/bin/hik-sdk-device-worker
 HIK_SDK_DEFAULT_PORT=8000
 EOF
 chmod 0644 "$SDK_ROOT/sdk.env"
@@ -68,4 +69,5 @@ chmod 0644 "$SDK_ROOT/sdk.env"
 log "HCNetSDK installed locally from operator-supplied package"
 log "Worker: $SDK_ROOT/bin/hik-sdk-worker"
 log "Channel probe: $SDK_ROOT/bin/hik-sdk-channel-probe"
+log "Grouped device worker: $SDK_ROOT/bin/hik-sdk-device-worker"
 log "No Hikvision SDK binaries were downloaded by this script"
