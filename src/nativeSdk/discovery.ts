@@ -4,7 +4,7 @@ import type {
   HikvisionStreamSettings,
   StreamType
 } from '../types.js';
-import { probeNativeDevice } from './client.js';
+import { probeNativeChannels, probeNativeDevice } from './client.js';
 
 function syntheticStream(physical: number, type: StreamType, previous?: HikvisionStreamSettings): HikvisionStreamSettings {
   const suffix = type === 'main' ? 1 : type === 'sub' ? 2 : 3;
@@ -30,6 +30,7 @@ function buildChannel(
   device: HikvisionDeviceConfig,
   physical: number,
   sdkChannel: number,
+  online: boolean | null,
   previous?: HikvisionChannel
 ): HikvisionChannel {
   const id = `${device.id}:${physical}`;
@@ -46,7 +47,7 @@ function buildChannel(
     physical_channel: physical,
     sdk_channel: sdkChannel,
     name: previous?.name || `${device.name} channel ${physical}`,
-    online: true,
+    online,
     enabled: override.enabled ?? previous?.enabled ?? true,
     primary_stream_id: primary,
     archive_track_ids: previous?.archive_track_ids?.length ? previous.archive_track_ids : [streams[0]!.id],
@@ -67,32 +68,32 @@ export async function discoverNativeHikvisionDevice(
   device: HikvisionDeviceConfig,
   previousChannels: HikvisionChannel[] = []
 ): Promise<NativeDiscoveryResult> {
-  const probe = await probeNativeDevice(device);
+  const [probe, inventory] = await Promise.all([
+    probeNativeDevice(device),
+    probeNativeChannels(device)
+  ]);
   const previous = new Map(previousChannels.map((channel) => [channel.physical_channel, channel]));
-  const channels: HikvisionChannel[] = [];
+  const channels = inventory.channels
+    .filter((item) => item.configured)
+    .sort((left, right) => left.physical_channel - right.physical_channel)
+    .map((item) => buildChannel(
+      device,
+      item.physical_channel,
+      item.sdk_channel,
+      item.online,
+      previous.get(item.physical_channel)
+    ));
 
-  const analogStart = Math.max(1, Number(probe.analog_start || 1));
-  const analogCount = Math.max(0, Number(probe.analog_count || 0));
-  for (let index = 0; index < analogCount; index += 1) {
-    const physical = index + 1;
-    channels.push(buildChannel(device, physical, analogStart + index, previous.get(physical)));
-  }
-
-  const digitalStart = Math.max(1, Number(probe.digital_start || 1));
-  const digitalCount = Math.max(0, Number(probe.digital_count || 0));
-  for (let index = 0; index < digitalCount; index += 1) {
-    const physical = analogCount + index + 1;
-    channels.push(buildChannel(device, physical, digitalStart + index, previous.get(physical)));
-  }
-
-  if (!channels.length) throw new Error('HCNetSDK login succeeded but device reported no channels');
+  if (!channels.length) throw new Error('HCNetSDK login succeeded but device reported no configured channels');
   return {
     device_info: {
       serialNumber: probe.serial,
       analog_start: probe.analog_start,
       analog_count: probe.analog_count,
       digital_start: probe.digital_start,
-      digital_count: probe.digital_count
+      digital_count: probe.digital_count,
+      configured_channels: channels.length,
+      channel_config_available: inventory.config_available
     },
     capabilities: {
       transport: 'hcnet-private-sdk',
@@ -101,6 +102,7 @@ export async function discoverNativeHikvisionDevice(
       archive_search: true,
       archive_playback: true,
       alarm_channel: true,
+      configured_channel_inventory: true,
       main_proto: probe.main_proto,
       sub_proto: probe.sub_proto
     },
