@@ -21,7 +21,7 @@ interface RuntimeRecorder {
 }
 
 function recorderKey(device: HikvisionDeviceConfig, channel: HikvisionChannel): string {
-  return `${device.id}|${channel.id}|${channel.sdk_channel}|${channel.primary_stream_id}|${channel.archive_storage}|${channel.enabled}`;
+  return `${device.id}|${channel.id}|${channel.sdk_channel}|${channel.primary_stream_id}|${channel.archive_storage}|${channel.enabled}|${channel.online}`;
 }
 
 function streamType(channel: HikvisionChannel): number {
@@ -76,12 +76,14 @@ export class NativeSdkRecorderManager {
     for (const item of devices) {
       if (!item.config.enabled) continue;
       for (const channel of item.channels) {
-        if (channel.enabled) wanted.set(channel.id, { device: item.config, channel });
+        // An offline digital channel is still kept in discovery/master state,
+        // but must not consume an NVR private-stream resource until it comes online.
+        if (channel.enabled && channel.online !== false) wanted.set(channel.id, { device: item.config, channel });
       }
     }
     for (const [channelId, runtime] of this.recorders) {
       const next = wanted.get(channelId);
-      if (!next || runtime.key !== recorderKey(next.device, next.channel)) this.stop(channelId, next ? 'configuration changed' : 'channel removed or disabled');
+      if (!next || runtime.key !== recorderKey(next.device, next.channel)) this.stop(channelId, next ? 'configuration changed' : 'channel offline, removed or disabled');
     }
     for (const [channelId, next] of wanted) {
       if (!this.recorders.has(channelId)) await this.start(next.device, next.channel);
