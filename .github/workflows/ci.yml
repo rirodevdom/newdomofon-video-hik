@@ -49,6 +49,8 @@ jobs:
           grep -q 'NET_DVR_RealPlay_V40' native-sdk/hik_sdk_device_worker.cpp
           grep -q 'verify-hcnet-sdk-runtime.sh' scripts/rebuild-hcnet-sdk-worker.sh
           grep -q 'sync_errors' scripts/update-installed-project.sh
+          grep -q 'live_devices_expected' scripts/update-installed-project.sh
+          grep -q 'live_devices_ready' scripts/update-installed-project.sh
       - name: Validate fast media source patch
         run: |
           python3 -m py_compile scripts/patch-fast-media-startup.py
@@ -72,6 +74,9 @@ jobs:
           grep -q 'waitForLivePlaylist' src/http/mediaRoutes.ts
           grep -q 'live_expected' src/index.ts
           grep -q 'live_ready' src/index.ts
+          grep -q 'live_devices_expected' src/index.ts
+          grep -q 'live_devices_ready' src/index.ts
+          grep -q 'live_unready' src/index.ts
       - name: Validate native SDK runtime patch
         run: |
           python3 -m py_compile scripts/patch-native-sdk-media-runtime.py
