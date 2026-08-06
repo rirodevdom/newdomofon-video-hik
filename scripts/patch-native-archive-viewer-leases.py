@@ -59,7 +59,7 @@ def patch_media_routes(path: Path) -> None:
     release_route = r'''
   router.post('/channels/:channelId/archive/viewer/release', async (req, res) => {
     try {
-      const found = find(req, service);
+      const found = await find(req, service);
       authorizeMedia(req, found.channelId, 'archive');
       const viewerId = String(req.body?.viewer_id ?? req.query.viewer_id ?? '').trim();
       if (!/^[A-Za-z0-9._~-]{8,128}$/.test(viewerId)) {
