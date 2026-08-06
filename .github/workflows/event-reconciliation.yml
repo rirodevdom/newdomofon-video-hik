@@ -5,6 +5,7 @@ on:
     paths:
       - 'scripts/patch-native-event-reconciliation.py'
       - 'scripts/patch-native-event-backfill.py'
+      - 'scripts/patch-native-event-stack.py'
       - 'scripts/update-installed-project.sh'
       - 'deploy/env/app.env.example'
       - 'native-sdk/**'
@@ -21,6 +22,7 @@ on:
     paths:
       - 'scripts/patch-native-event-reconciliation.py'
       - 'scripts/patch-native-event-backfill.py'
+      - 'scripts/patch-native-event-stack.py'
       - 'scripts/update-installed-project.sh'
       - 'deploy/env/app.env.example'
       - 'native-sdk/**'
@@ -40,15 +42,12 @@ jobs:
       - uses: actions/checkout@v4
       - name: Materialize archive pool prerequisite
         run: python3 scripts/patch-native-archive-concurrency.py --project-dir .
-      - name: Materialize native event reconciliation
-        run: python3 scripts/patch-native-event-reconciliation.py --project-dir .
-      - name: Materialize persistent event backfill
-        run: python3 scripts/patch-native-event-backfill.py --project-dir .
-      - name: Verify event patches are idempotent
+      - name: Materialize native event stack
+        run: python3 scripts/patch-native-event-stack.py --project-dir .
+      - name: Verify event patch stack is idempotent
         run: |
           before="$(sha256sum native-sdk/hik_sdk_device_worker.cpp src/nativeSdk/eventCollector.ts src/nativeSdk/deviceRuntime.ts src/events/eventStore.ts src/config.ts test/native-sdk/HCNetSDK.h | sha256sum | awk '{print $1}')"
-          python3 scripts/patch-native-event-reconciliation.py --project-dir .
-          python3 scripts/patch-native-event-backfill.py --project-dir .
+          python3 scripts/patch-native-event-stack.py --project-dir .
           after="$(sha256sum native-sdk/hik_sdk_device_worker.cpp src/nativeSdk/eventCollector.ts src/nativeSdk/deviceRuntime.ts src/events/eventStore.ts src/config.ts test/native-sdk/HCNetSDK.h | sha256sum | awk '{print $1}')"
           test "$before" = "$after"
       - name: Compile patched grouped worker against SDK stub
