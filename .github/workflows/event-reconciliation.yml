@@ -5,6 +5,8 @@ on:
     paths:
       - 'scripts/patch-native-event-reconciliation.py'
       - 'scripts/patch-native-event-backfill.py'
+      - 'scripts/update-installed-project.sh'
+      - 'deploy/env/app.env.example'
       - 'native-sdk/**'
       - 'src/nativeSdk/**'
       - 'src/events/**'
@@ -19,6 +21,8 @@ on:
     paths:
       - 'scripts/patch-native-event-reconciliation.py'
       - 'scripts/patch-native-event-backfill.py'
+      - 'scripts/update-installed-project.sh'
+      - 'deploy/env/app.env.example'
       - 'native-sdk/**'
       - 'src/nativeSdk/**'
       - 'src/events/**'
