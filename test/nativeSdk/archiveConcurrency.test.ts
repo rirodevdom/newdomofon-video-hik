@@ -21,6 +21,13 @@ test('new archive windows no longer retire every previous session on the same ca
   assert.match(sessionsSource, /statusCode: 429/);
 });
 
+test('near-identical requests on the same camera share a producer instead of consuming pool slots', () => {
+  assert.match(sessionsSource, /ARCHIVE_REQUEST_COALESCE_MS = 5_000/);
+  assert.match(sessionsSource, /candidate\.channelId === channel\.id/);
+  assert.match(sessionsSource, /Math\.abs\(candidate\.start\.getTime\(\) - start\.getTime\(\)\) <= ARCHIVE_REQUEST_COALESCE_MS/);
+  assert.match(sessionsSource, /Math\.abs\(candidate\.end\.getTime\(\) - end\.getTime\(\)\) <= ARCHIVE_REQUEST_COALESCE_MS/);
+});
+
 test('same-channel live resumes only after the last archive playback stops', () => {
   assert.match(workerSource, /has_playback_for_channel/);
   assert.match(workerSource, /resumeLive && !has_playback_for_channel\(playbacks, playbackSdkChannel\)/);
