@@ -100,11 +100,8 @@ if [[ -f /opt/hikvision/hcnetsdk/include/HCNetSDK.h ]]; then
   log "Preparing bounded native archive playback pool"
   python3 "$PROJECT_DIR/scripts/patch-native-archive-concurrency.py" --project-dir "$PROJECT_DIR"
 
-  log "Preparing native historical event reconciliation"
-  python3 "$PROJECT_DIR/scripts/patch-native-event-reconciliation.py" --project-dir "$PROJECT_DIR"
-
-  log "Preparing persistent native event backfill"
-  python3 "$PROJECT_DIR/scripts/patch-native-event-backfill.py" --project-dir "$PROJECT_DIR"
+  log "Preparing native event reconciliation and persistent backfill"
+  python3 "$PROJECT_DIR/scripts/patch-native-event-stack.py" --project-dir "$PROJECT_DIR"
 
   log "Rebuilding installed native HCNetSDK workers"
   PROJECT_DIR="$PROJECT_DIR" bash "$PROJECT_DIR/scripts/rebuild-hcnet-sdk-worker.sh"
