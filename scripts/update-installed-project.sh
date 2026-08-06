@@ -103,6 +103,9 @@ if [[ -f /opt/hikvision/hcnetsdk/include/HCNetSDK.h ]]; then
   log "Preparing native historical event reconciliation"
   python3 "$PROJECT_DIR/scripts/patch-native-event-reconciliation.py" --project-dir "$PROJECT_DIR"
 
+  log "Preparing persistent native event backfill"
+  python3 "$PROJECT_DIR/scripts/patch-native-event-backfill.py" --project-dir "$PROJECT_DIR"
+
   log "Rebuilding installed native HCNetSDK workers"
   PROJECT_DIR="$PROJECT_DIR" bash "$PROJECT_DIR/scripts/rebuild-hcnet-sdk-worker.sh"
 
@@ -117,6 +120,10 @@ if [[ -f /opt/hikvision/hcnetsdk/include/HCNetSDK.h ]]; then
   set_env_default HIK_EVENT_SYNC_SECONDS 60
   set_env_default HIK_EVENT_SYNC_OVERLAP_SECONDS 120
   set_env_default HIK_EVENT_SYNC_INITIAL_LOOKBACK_SECONDS 3600
+  set_env_default HIK_EVENT_BACKFILL_ENABLED true
+  set_env_default HIK_EVENT_BACKFILL_RETENTION_DAYS 30
+  set_env_default HIK_EVENT_BACKFILL_CHUNK_SECONDS 21600
+  set_env_default HIK_EVENT_BACKFILL_INTERVAL_SECONDS 30
   chmod 0600 "$ENV_FILE"
 else
   log "HCNetSDK is not installed; native worker rebuild skipped"
