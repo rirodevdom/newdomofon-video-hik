@@ -100,6 +100,9 @@ if [[ -f /opt/hikvision/hcnetsdk/include/HCNetSDK.h ]]; then
   log "Preparing bounded native archive playback pool"
   python3 "$PROJECT_DIR/scripts/patch-native-archive-concurrency.py" --project-dir "$PROJECT_DIR"
 
+  log "Preparing native historical event reconciliation"
+  python3 "$PROJECT_DIR/scripts/patch-native-event-reconciliation.py" --project-dir "$PROJECT_DIR"
+
   log "Rebuilding installed native HCNetSDK workers"
   PROJECT_DIR="$PROJECT_DIR" bash "$PROJECT_DIR/scripts/rebuild-hcnet-sdk-worker.sh"
 
@@ -110,6 +113,10 @@ if [[ -f /opt/hikvision/hcnetsdk/include/HCNetSDK.h ]]; then
   set_env_default HIK_SDK_CHANNEL_PROBE /opt/hikvision/hcnetsdk/bin/hik-sdk-channel-probe
   set_env_default HIK_SDK_DEVICE_WORKER /opt/hikvision/hcnetsdk/bin/hik-sdk-device-worker
   set_env_default HIK_DEVICE_ARCHIVE_MAX_ACTIVE_PER_DVR 4
+  set_env_default HIK_EVENT_SYNC_ENABLED true
+  set_env_default HIK_EVENT_SYNC_SECONDS 60
+  set_env_default HIK_EVENT_SYNC_OVERLAP_SECONDS 120
+  set_env_default HIK_EVENT_SYNC_INITIAL_LOOKBACK_SECONDS 3600
   chmod 0600 "$ENV_FILE"
 else
   log "HCNetSDK is not installed; native worker rebuild skipped"

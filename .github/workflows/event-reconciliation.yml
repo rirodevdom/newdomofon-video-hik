@@ -1,0 +1,44 @@
+name: Event reconciliation CI
+
+on:
+  pull_request:
+    paths:
+      - 'scripts/patch-native-event-reconciliation.py'
+      - 'native-sdk/**'
+      - 'src/nativeSdk/**'
+      - 'src/events/**'
+      - 'src/config.ts'
+      - 'test/native-sdk/**'
+      - 'test/nativeSdk/eventReconciliation.test.ts'
+      - 'package.json'
+      - '.github/workflows/event-reconciliation.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'scripts/patch-native-event-reconciliation.py'
+      - 'native-sdk/**'
+      - 'src/nativeSdk/**'
+      - 'src/events/**'
+      - 'src/config.ts'
+      - 'test/native-sdk/**'
+      - 'test/nativeSdk/eventReconciliation.test.ts'
+      - 'package.json'
+      - '.github/workflows/event-reconciliation.yml'
+
+jobs:
+  patch-and-compile:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Materialize archive pool prerequisite
+        run: python3 scripts/patch-native-archive-concurrency.py --project-dir .
+      - name: Materialize native event reconciliation
+        run: python3 scripts/patch-native-event-reconciliation.py --project-dir .
+      - name: Verify event patch is idempotent
+        run: |
+          before="$(sha256sum native-sdk/hik_sdk_device_worker.cpp src/nativeSdk/eventCollector.ts src/nativeSdk/deviceRuntime.ts src/events/eventStore.ts src/config.ts test/native-sdk/HCNetSDK.h | sha256sum | awk '{print $1}')"
+          python3 scripts/patch-native-event-reconciliation.py --project-dir .
+          after="$(sha256sum native-sdk/hik_sdk_device_worker.cpp src/nativeSdk/eventCollector.ts src/nativeSdk/deviceRuntime.ts src/events/eventStore.ts src/config.ts test/native-sdk/HCNetSDK.h | sha256sum | awk '{print $1}')"
+          test "$before" = "$after"
+      - name: Compile patched grouped worker against SDK stub
+        run: g++ -std=c++17 -fsyntax-only -I test/native-sdk native-sdk/hik_sdk_device_worker.cpp
