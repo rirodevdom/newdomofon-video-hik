@@ -24,3 +24,14 @@ test('media route materializes on-demand SmartYard TS archive segments', () => {
   assert.match(client, /downloadNativeArchiveRange/);
   assert.match(client, /\['download'\]/);
 });
+
+test('virtual archive falls back to exact-time grouped playback', () => {
+  const routes = read('src/http/mediaRoutes.ts');
+  assert.match(routes, /SMARTYARD_VIRTUAL_ARCHIVE_PLAYBACK_FALLBACK/);
+  assert.match(routes, /renderVirtualSegmentViaGroupedPlayback/);
+  assert.match(routes, /startGroupedPlayback/);
+  assert.match(routes, /stopGroupedPlayback/);
+  assert.match(routes, /sdkChannel\(found\.channel\)/);
+  assert.match(routes, /Virtual archive segment failed: download=/);
+  assert.match(routes, /grouped_playback=/);
+});
