@@ -135,4 +135,6 @@ jobs:
           DVR_NODE_INTERNAL_URL: http://192.0.2.41:3020
           HIK_NODE_STATE_KEY: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
           HIK_NODE_ROOT: ${{ runner.temp }}/newdomofon-video-hik
-        run: npm run check
+        run: |
+          npm run check
+          g++ -std=c++17 -fsyntax-only -I test/native-sdk native-sdk/hik_sdk_device_worker.cpp
