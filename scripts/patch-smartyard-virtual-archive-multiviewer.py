@@ -138,7 +138,7 @@ function findVirtualArchiveBurst(channelId: string, start: Date, segmentSeconds:
     text = replace_function(text, 'cancelVirtualArchiveSegment', replacement_cancel, 'ensureVirtualArchiveSegment')
 
     ensure_start = text.find('async function ensureVirtualArchiveSegment(')
-    ensure_end = text.find('\n\nexport function createMediaRouter(', ensure_start)
+    ensure_end = text.find('export function createMediaRouter(', ensure_start)
     if ensure_start < 0 or ensure_end < 0:
         raise SystemExit('ensureVirtualArchiveSegment bounds not found')
     ensure = text[ensure_start:ensure_end]
