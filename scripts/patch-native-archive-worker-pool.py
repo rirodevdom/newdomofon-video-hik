@@ -20,11 +20,42 @@ def function_bounds(text: str, signature: str) -> tuple[int, int]:
     start = text.find(signature)
     if start < 0:
         raise SystemExit(f'function not found: {signature}')
-    brace = text.find('{', start)
+
+    paren = text.find('(', start)
+    if paren < 0:
+        raise SystemExit(f'opening parenthesis not found: {signature}')
+    paren_depth = 0
+    quote: str | None = None
+    escaped = False
+    signature_end = -1
+    for index in range(paren, len(text)):
+        char = text[index]
+        if quote is not None:
+            if escaped:
+                escaped = False
+            elif char == '\\':
+                escaped = True
+            elif char == quote:
+                quote = None
+            continue
+        if char in ('"', "'", '`'):
+            quote = char
+            continue
+        if char == '(':
+            paren_depth += 1
+        elif char == ')':
+            paren_depth -= 1
+            if paren_depth == 0:
+                signature_end = index + 1
+                break
+    if signature_end < 0:
+        raise SystemExit(f'closing parenthesis not found: {signature}')
+
+    brace = text.find('{', signature_end)
     if brace < 0:
         raise SystemExit(f'opening brace not found: {signature}')
     depth = 0
-    quote: str | None = None
+    quote = None
     escaped = False
     for index in range(brace, len(text)):
         char = text[index]
