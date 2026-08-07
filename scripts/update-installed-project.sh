@@ -110,6 +110,7 @@ if [[ -f /opt/hikvision/hcnetsdk/include/HCNetSDK.h ]]; then
   set_env_default HIK_SDK_CHANNEL_PROBE /opt/hikvision/hcnetsdk/bin/hik-sdk-channel-probe
   set_env_default HIK_SDK_DEVICE_WORKER /opt/hikvision/hcnetsdk/bin/hik-sdk-device-worker
   set_env_default HIK_DEVICE_ARCHIVE_MAX_ACTIVE_PER_DVR 4
+  set_env_default HIK_LIVE_DELETE_THRESHOLD 60
   set_env_default HIK_EVENT_SYNC_ENABLED true
   set_env_default HIK_EVENT_SYNC_SECONDS 60
   set_env_default HIK_EVENT_SYNC_OVERLAP_SECONDS 120
