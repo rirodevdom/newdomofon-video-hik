@@ -22,6 +22,18 @@ set_env_default() {
   fi
 }
 
+migrate_env_default() {
+  local key="$1"
+  local old_value="$2"
+  local new_value="$3"
+  if grep -qE "^${key}=${old_value}$" "$ENV_FILE"; then
+    sed -i -E "s|^${key}=${old_value}$|${key}=${new_value}|" "$ENV_FILE"
+    log "Runtime env managed default migrated: $key=$old_value -> $new_value"
+  else
+    set_env_default "$key" "$new_value"
+  fi
+}
+
 recover_service_on_failure() {
   local status=$?
   trap - EXIT
@@ -109,7 +121,12 @@ if [[ -f /opt/hikvision/hcnetsdk/include/HCNetSDK.h ]]; then
   set_env_default HIK_SDK_WORKER /opt/hikvision/hcnetsdk/bin/hik-sdk-worker
   set_env_default HIK_SDK_CHANNEL_PROBE /opt/hikvision/hcnetsdk/bin/hik-sdk-channel-probe
   set_env_default HIK_SDK_DEVICE_WORKER /opt/hikvision/hcnetsdk/bin/hik-sdk-device-worker
-  set_env_default HIK_DEVICE_ARCHIVE_MAX_ACTIVE_PER_DVR 4
+  # 4 was the managed default before archive workers were isolated/sharded.
+  # Preserve any operator-custom value, but migrate untouched installations to 48.
+  migrate_env_default HIK_DEVICE_ARCHIVE_MAX_ACTIVE_PER_DVR 4 48
+  set_env_default HIK_DEVICE_ARCHIVE_WORKER_COUNT 3
+  set_env_default HIK_DEVICE_ARCHIVE_MAX_ACTIVE_PER_WORKER 16
+  set_env_default HIK_SMARTYARD_ARCHIVE_MAX_BURSTS_PER_DVR 48
   set_env_default HIK_LIVE_DELETE_THRESHOLD 60
   set_env_default HIK_EVENT_SYNC_ENABLED true
   set_env_default HIK_EVENT_SYNC_SECONDS 60
