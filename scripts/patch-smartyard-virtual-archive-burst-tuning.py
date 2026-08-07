@@ -40,9 +40,25 @@ def patch_media_routes(path: Path) -> None:
     await promoteBurstParts(found, burstStart, segmentSeconds, workDir, false);""",
         'virtual archive burst rejection observer',
     )
+
+    # Earlier media patches already materialize a generic delay() helper. Keep
+    # every helper introduced by this late burst block namespaced so the final
+    # TypeScript cannot collide with preceding materialization steps.
+    burst_start = text.find("const SMARTYARD_VIRTUAL_ARCHIVE_BURST =")
+    burst_end = text.find("export function createMediaRouter(", burst_start)
+    if burst_start < 0 or burst_end < 0:
+        raise SystemExit('virtual archive burst helper block not found for tuning')
+    block = text[burst_start:burst_end]
+    if block.count('function delay(ms: number)') != 1:
+        raise SystemExit(f'virtual archive burst delay helper: expected one source block, found {block.count("function delay(ms: number)")}')
+    block = block.replace('function delay(ms: number)', 'function virtualArchiveDelay(ms: number)', 1)
+    block = block.replace('delay(50)', 'virtualArchiveDelay(50)')
+    text = text[:burst_start] + block + text[burst_end:]
+
     path.write_text(text, encoding='utf-8')
     print('SmartYard virtual archive burst timeout raised to 60 seconds for slower DVR delivery')
     print('Background burst ffmpeg failures are observed immediately while segments are promoted')
+    print('SmartYard burst helpers are namespaced to avoid collisions with earlier media patches')
 
 
 def main() -> None:
