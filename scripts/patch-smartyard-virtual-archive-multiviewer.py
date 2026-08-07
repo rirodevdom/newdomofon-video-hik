@@ -16,13 +16,19 @@ def replace_once(text: str, old: str, new: str, label: str) -> str:
     return text.replace(old, new, 1)
 
 
+def function_start(text: str, name: str, offset: int = 0) -> int:
+    candidates = [
+        index for index in (
+            text.find(f'async function {name}(', offset),
+            text.find(f'function {name}(', offset),
+        ) if index >= 0
+    ]
+    return min(candidates) if candidates else -1
+
+
 def replace_function(text: str, name: str, replacement: str, next_name: str) -> str:
-    start = text.find(f'function {name}(')
-    if start < 0:
-        start = text.find(f'async function {name}(')
-    end = text.find(f'function {next_name}(', start)
-    if end < 0:
-        end = text.find(f'async function {next_name}(', start)
+    start = function_start(text, name)
+    end = function_start(text, next_name, start if start >= 0 else 0)
     if start < 0 or end < 0:
         raise SystemExit(f'{name}: function bounds not found')
     return text[:start] + replacement.rstrip() + '\n\n' + text[end:]
