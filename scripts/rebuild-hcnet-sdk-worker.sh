@@ -28,6 +28,9 @@ find "$SDK_ROOT/include" "$SDK_ROOT/runtime" -type f -exec chmod go-w {} +
 
 python3 "$PROJECT_DIR/scripts/patch-archive-live-coexistence.py" --project-dir "$PROJECT_DIR"
 python3 "$PROJECT_DIR/scripts/patch-smartyard-virtual-archive-segments.py" --project-dir "$PROJECT_DIR" --native-only
+if ! grep -q '^#include <sys/stat.h>$' "$WORKER_SOURCE"; then
+  sed -i '/^#include <unistd.h>$/i #include <sys/stat.h>' "$WORKER_SOURCE"
+fi
 
 build_native() {
   local source="$1"
