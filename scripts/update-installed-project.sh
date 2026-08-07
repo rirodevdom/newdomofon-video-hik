@@ -103,9 +103,6 @@ if [[ -f /opt/hikvision/hcnetsdk/include/HCNetSDK.h ]]; then
   log "Preparing native event reconciliation and persistent backfill"
   python3 "$PROJECT_DIR/scripts/patch-native-event-stack.py" --project-dir "$PROJECT_DIR"
 
-  log "Rebuilding installed native HCNetSDK workers"
-  PROJECT_DIR="$PROJECT_DIR" bash "$PROJECT_DIR/scripts/rebuild-hcnet-sdk-worker.sh"
-
   set_env_default HIK_NATIVE_SDK_PREFERRED true
   set_env_default HIK_NATIVE_SDK_REQUIRED true
   set_env_default HIK_NATIVE_SDK_FALLBACK false
@@ -133,6 +130,11 @@ set -a
 . "$ENV_FILE"
 set +a
 npm run check
+
+if [[ -f /opt/hikvision/hcnetsdk/include/HCNetSDK.h ]]; then
+  log "Rebuilding installed native HCNetSDK workers after materialization"
+  PROJECT_DIR="$PROJECT_DIR" bash "$PROJECT_DIR/scripts/rebuild-hcnet-sdk-worker.sh"
+fi
 
 npm prune --omit=dev
 chown -R root:root "$PROJECT_DIR"
