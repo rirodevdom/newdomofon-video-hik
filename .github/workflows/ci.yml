@@ -114,6 +114,17 @@ jobs:
         run: |
           gzip -dc package-lock.json.gz > package-lock.json
           npm ci
+      - name: Reset validation-materialized source files
+        run: |
+          git checkout -- \
+            src/config.ts \
+            src/media/rtsp.ts \
+            src/media/recorderManager.ts \
+            src/archive/deviceArchive.ts \
+            src/archive/deviceArchiveSessions.ts \
+            src/http/mediaRoutes.ts \
+            src/index.ts \
+            src/service.ts
       - name: Build and test
         env:
           DVR_MASTER_URL: https://video-master.example.com
