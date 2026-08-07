@@ -27,6 +27,7 @@ find "$SDK_ROOT/include" "$SDK_ROOT/runtime" -type f -exec chmod a+r {} +
 find "$SDK_ROOT/include" "$SDK_ROOT/runtime" -type f -exec chmod go-w {} +
 
 python3 "$PROJECT_DIR/scripts/patch-archive-live-coexistence.py" --project-dir "$PROJECT_DIR"
+python3 "$PROJECT_DIR/scripts/patch-smartyard-virtual-archive-segments.py" --project-dir "$PROJECT_DIR" --native-only
 
 build_native() {
   local source="$1"
