@@ -4,26 +4,23 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-MARKER = 'HIK_LIVE_DELETE_THRESHOLD'
-
-
-def replace_once(text: str, old: str, new: str, label: str) -> str:
-    if new in text:
-        return text
-    count = text.count(old)
-    if count != 1:
-        raise SystemExit(f'{label}: expected one source block, found {count}')
-    return text.replace(old, new, 1)
-
 
 def patch_config(path: Path) -> None:
     text = path.read_text(encoding='utf-8')
-    if "liveDeleteThreshold: numberEnv('HIK_LIVE_DELETE_THRESHOLD'" not in text:
-        text = replace_once(
-            text,
-            "  segmentSeconds: numberEnv('HIK_SEGMENT_SECONDS', 4, 1),\n  liveWindow: numberEnv('HIK_LIVE_WINDOW', 8, 2),",
-            "  segmentSeconds: numberEnv('HIK_SEGMENT_SECONDS', 4, 1),\n  liveWindow: numberEnv('HIK_LIVE_WINDOW', 8, 2),\n  liveDeleteThreshold: numberEnv('HIK_LIVE_DELETE_THRESHOLD', 60, 2),",
-            'live HLS retention config',
+    marker = "liveDeleteThreshold: numberEnv('HIK_LIVE_DELETE_THRESHOLD'"
+    if marker not in text:
+        candidates = [
+            "  liveWindow: numberEnv('HIK_LIVE_WINDOW', 6, 2),",
+            "  liveWindow: numberEnv('HIK_LIVE_WINDOW', 8, 2),",
+        ]
+        matches = [candidate for candidate in candidates if candidate in text]
+        if len(matches) != 1:
+            raise SystemExit(f'live HLS retention config: expected one liveWindow anchor, found {len(matches)}')
+        anchor = matches[0]
+        text = text.replace(
+            anchor,
+            anchor + "\n  liveDeleteThreshold: numberEnv('HIK_LIVE_DELETE_THRESHOLD', 60, 2),",
+            1,
         )
     path.write_text(text, encoding='utf-8')
 
@@ -32,12 +29,15 @@ def patch_recorder(path: Path, label: str) -> None:
     text = path.read_text(encoding='utf-8')
     if "String(config.liveDeleteThreshold)" in text:
         return
-    text = replace_once(
-        text,
-        "...(nodeArchive ? ['-strftime', '1', '-strftime_mkdir', '1'] : ['-hls_delete_threshold', '2']),",
-        "...(nodeArchive ? ['-strftime', '1', '-strftime_mkdir', '1'] : ['-hls_delete_threshold', String(config.liveDeleteThreshold)]),",
-        label,
-    )
+
+    candidates = [
+        "['-hls_delete_threshold', '2']",
+        "['-hls_delete_threshold', String(Math.max(4, config.liveWindow))]",
+    ]
+    matches = [candidate for candidate in candidates if candidate in text]
+    if len(matches) != 1:
+        raise SystemExit(f'{label}: expected one delete-threshold anchor, found {len(matches)}')
+    text = text.replace(matches[0], "['-hls_delete_threshold', String(config.liveDeleteThreshold)]", 1)
     path.write_text(text, encoding='utf-8')
 
 
